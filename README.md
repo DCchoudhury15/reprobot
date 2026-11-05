@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/DCchoudhury15/reprobot/actions/workflows/ci.yml/badge.svg)](https://github.com/DCchoudhury15/reprobot/actions/workflows/ci.yml)
 
-reprobot checks security reports by running them.
+reprobot checks security reports by running them. Site: https://reprobot-two.vercel.app
 
 Open source projects now get more security reports than they can read, and
 many are automated reports about bugs that do not exist. A report that reads
