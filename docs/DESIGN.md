@@ -38,6 +38,9 @@ claim:
 
 Paths in `run.cmd` are relative to the run directory inside the sandbox:
 `bin/` holds the build outputs, `poc/` holds the reporter files.
+`run.cmd[0]` must be one of the profile outputs (`bin/<output>`). A shell or
+any other program from the image is rejected, because it would let the
+reporter print anything.
 
 ### Maintainer file: project config
 
@@ -76,7 +79,8 @@ limits:
 4. **Run.** Every run gets a fresh sandbox: no network, read-only root,
    tmpfs for scratch, CPU, memory, pid and time limits, all capabilities
    dropped, no new privileges. Run `repeat` times.
-5. **Analyze.** Parse sanitizer output (ASan, UBSan). Build a crash
+5. **Analyze.** Parse the sanitizer report (ASan, UBSan) from the report
+   channel described below, never from stdout or stderr. Build a crash
    signature from the crash kind and the top 3 frames that belong to the
    project (skip sanitizer runtime and libc frames). Compare with the claim.
 6. **Dedup.** Look the signature up for the project. Same signature means
@@ -98,6 +102,26 @@ limits:
 
 A real logic bug must never be labelled fake. reprobot only judges claims it
 can test.
+
+## Fake reports
+
+The reporter controls the input. If the program echoes its input (many
+parsers print bad input in error messages), a reporter could paste a real
+sanitizer report into the input and make it appear on stderr. So reprobot
+never reads crashes from stdout or stderr. Each run gets:
+
+- a fresh out dir mounted at `/work/out`, mode 0711, so the run user can
+  enter it but not list it;
+- inside it, a subdir with a random 128-bit name, mode 2733 (anyone may
+  create files, only reprobot may list; setgid so reprobot can read files
+  the run user owns);
+- `log_path` pointing the sanitizer into that subdir and a random
+  sanitizer `exitcode` (64 to 120), both appended last to `ASAN_OPTIONS`
+  and `UBSAN_OPTIONS` so they win over the profile.
+
+A crash counts only when a report file exists in the secret subdir and the
+exit code equals the secret one. Log files are opened without following
+symlinks and without blocking on FIFOs, because the run user owns them.
 
 ## Sandbox
 

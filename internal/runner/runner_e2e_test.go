@@ -5,6 +5,7 @@ package runner
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -76,8 +77,8 @@ func TestE2EVulnFixRevert(t *testing.T) {
 	if len(vuln.ClaimFindings) != 0 {
 		t.Errorf("the fixture claim is accurate, got findings %q", vuln.ClaimFindings)
 	}
-	if !strings.Contains(vuln.Runs[0].StderrTail, "heap-buffer-overflow") {
-		t.Errorf("stderr tail does not show the report: %q", vuln.Runs[0].StderrTail)
+	if !strings.Contains(vuln.Runs[0].Report, "AddressSanitizer: heap-buffer-overflow") {
+		t.Errorf("run does not keep the sanitizer report: %q", vuln.Runs[0].Report)
 	}
 
 	fix := check(t, f.RepoDir, cache, f.Fix, nil)
@@ -159,11 +160,72 @@ func TestE2EBuildFailed(t *testing.T) {
 	}
 }
 
+// extraProfiles are maintainer profiles used by the tests below. echoer
+// stands for a real program that prints bad input in its error messages.
+const extraProfiles = `  echo:
+    build: |
+      printf '#!/bin/sh\ncat "$1" >&2\nexit 1\n' > echoer && chmod 755 echoer
+    outputs: [echoer]
+  hang:
+    build: |
+      printf '#!/bin/sh\nexec sleep 100\n' > hang && chmod 755 hang
+    outputs: [hang]
+limits:`
+
+// fakeReport writes a real captured ASan report for this bug next to the
+// repro.yaml and lists it as a reporter file.
+func fakeReport(t *testing.T, repro string) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(testutil.FixtureDir(), "..", "..", "sanitizer", "out", "tinyparse.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "AddressSanitizer: heap-buffer-overflow") {
+		t.Fatal("captured report is not an ASan report")
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(repro), "report.txt"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edit(t, repro, "  - input.bin", "  - input.bin\n  - report.txt")
+}
+
+// A program that echoes reporter input to stderr must not turn a pasted
+// sanitizer report into a crash. The Fix commit has no bug at all.
+func TestE2EFakeReportOnStderrIsIgnored(t *testing.T) {
+	f := testutil.NewTinyparseRepo(t)
+	res := check(t, f.RepoDir, t.TempDir(), f.Fix, func(project, repro string) {
+		edit(t, project, "limits:", extraProfiles)
+		fakeReport(t, repro)
+		edit(t, repro, "profile: asan", "profile: echo")
+		edit(t, repro, `cmd: ["bin/tinyparse", "poc/input.bin"]`, `cmd: ["bin/echoer", "poc/report.txt"]`)
+	})
+	wantState(t, res, result.NotReproduced)
+	if !strings.Contains(res.Runs[0].StderrTail, "AddressSanitizer: heap-buffer-overflow") {
+		t.Fatalf("the fake report did not reach stderr, so this test proves nothing: %q", res.Runs[0].StderrTail)
+	}
+}
+
+// The reporter may only run programs the maintainers build. A shell would
+// let the reporter print anything.
+func TestE2EReporterShellIsRejected(t *testing.T) {
+	f := testutil.NewTinyparseRepo(t)
+	res := check(t, f.RepoDir, t.TempDir(), f.Fix, func(_, repro string) {
+		fakeReport(t, repro)
+		edit(t, repro, `cmd: ["bin/tinyparse", "poc/input.bin"]`, `cmd: ["sh", "-c", "cat poc/report.txt >&2; exit 1"]`)
+	})
+	wantState(t, res, result.InvalidInput)
+	if len(res.Runs) != 0 {
+		t.Errorf("ran %d times", len(res.Runs))
+	}
+}
+
 func TestE2ETimeout(t *testing.T) {
 	f := testutil.NewTinyparseRepo(t)
 	start := time.Now()
-	res := check(t, f.RepoDir, t.TempDir(), f.Vuln, func(_, repro string) {
-		edit(t, repro, `cmd: ["bin/tinyparse", "poc/input.bin"]`, `cmd: ["sh", "-c", "sleep 100"]`)
+	res := check(t, f.RepoDir, t.TempDir(), f.Vuln, func(project, repro string) {
+		edit(t, project, "limits:", extraProfiles)
+		edit(t, repro, "profile: asan", "profile: hang")
+		edit(t, repro, `cmd: ["bin/tinyparse", "poc/input.bin"]`, `cmd: ["bin/hang"]`)
 		edit(t, repro, "timeout_seconds: 20", "timeout_seconds: 2")
 	})
 	wantState(t, res, result.Timeout)

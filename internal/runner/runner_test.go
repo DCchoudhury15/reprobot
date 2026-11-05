@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -182,6 +183,7 @@ type fake struct {
 	binDir    string
 	buildOut  build.Output
 	outcomes  []sandbox.Outcome // one per run
+	reports   []string          // sanitizer log file each run writes ("" = none)
 
 	loadReproErr, loadProjectErr, checkErr, filePathsErr, hashErr error
 	filePathsOverride                                             []string
@@ -190,6 +192,7 @@ type fake struct {
 	calls    []string
 	specs    []sandbox.Spec
 	pocFiles []map[string]string // poc dir contents seen by each run
+	outDirs  []string
 }
 
 func newFake(t *testing.T) *fake {
@@ -203,7 +206,8 @@ func newFake(t *testing.T) *fake {
 			t.Fatal(err)
 		}
 	}
-	crash := sandbox.Outcome{ExitCode: 1, Stderr: "CRASH heap-buffer-overflow", Duration: time.Second}
+	crash := sandbox.Outcome{ExitCode: 77, Stderr: "program stderr", Duration: time.Second}
+	report := "CRASH heap-buffer-overflow"
 	return &fake{
 		t: t,
 		repro: &spec.Reproducer{
@@ -224,6 +228,7 @@ func newFake(t *testing.T) *fake {
 		binDir:    t.TempDir(),
 		buildOut:  build.Output{Key: "key1", CacheHit: true, LogTail: "build log", ImageDigest: "sha256:img", Runtime: "runc"},
 		outcomes:  []sandbox.Outcome{crash, crash, crash},
+		reports:   []string{report, report, report},
 	}
 }
 
@@ -300,7 +305,16 @@ func (f *fake) deps() deps {
 			if f.runErr != nil {
 				return sandbox.Outcome{}, f.runErr
 			}
-			return f.outcomes[len(f.specs)-1], nil
+			i := len(f.specs) - 1
+			out := mountSource(t, s, "/work/out")
+			f.outDirs = append(f.outDirs, out)
+			// Act like the sanitizer: write the report to the secret log dir.
+			if i < len(f.reports) && f.reports[i] != "" {
+				if err := os.WriteFile(filepath.Join(out, "tok", "asan.1"), []byte(f.reports[i]), 0o640); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return f.outcomes[i], nil
 		},
 		parse: func(stderr string) *result.Crash {
 			if kind, ok := strings.CutPrefix(stderr, "CRASH "); ok {
@@ -311,7 +325,19 @@ func (f *fake) deps() deps {
 		compare: func(c spec.Claim, crash *result.Crash) (bool, []string) {
 			return crash.Kind == c.Kind, []string{"compare finding"}
 		},
+		secret: func() (string, int, error) { return "tok", 77, nil },
 	}
+}
+
+func mountSource(t *testing.T, s sandbox.Spec, target string) string {
+	t.Helper()
+	for _, m := range s.Mounts {
+		if m.Target == target {
+			return m.Source
+		}
+	}
+	t.Fatalf("no %s mount in %+v", target, s.Mounts)
+	return ""
 }
 
 // readPocDir returns the files in the poc mount (relative name to
@@ -404,7 +430,7 @@ func TestRunReproduced(t *testing.T) {
 		t.Errorf("times: started %v finished %v", res.StartedAt, res.FinishedAt)
 	}
 	for i, r := range res.Runs {
-		if r.ExitCode != 1 || r.Duration != time.Second || r.StderrTail != "CRASH heap-buffer-overflow" || r.Crash == nil {
+		if r.ExitCode != 77 || r.Duration != time.Second || r.StderrTail != "program stderr" || r.Report != "CRASH heap-buffer-overflow" || r.Crash == nil || r.Note != "" {
 			t.Errorf("run %d = %+v", i, r)
 		}
 	}
@@ -414,14 +440,18 @@ func TestRunReproduced(t *testing.T) {
 	}
 	pocDir := f.specs[0].Mounts[1].Source
 	want := sandbox.Spec{
-		Image:   "gcc:15",
-		Cmd:     []string{"bin/tinyparse", "poc/input.bin"},
-		User:    "65534:65534",
-		Env:     map[string]string{"ASAN_OPTIONS": "detect_leaks=0", "UBSAN_OPTIONS": "print_stacktrace=1"},
+		Image: "gcc:15",
+		Cmd:   []string{"bin/tinyparse", "poc/input.bin"},
+		User:  "65534:65534",
+		Env: map[string]string{
+			"ASAN_OPTIONS":  "detect_leaks=0:log_path=/work/out/tok/asan:exitcode=77:abort_on_error=0",
+			"UBSAN_OPTIONS": "print_stacktrace=1:log_path=/work/out/tok/ubsan:exitcode=77:abort_on_error=0",
+		},
 		WorkDir: "/work",
 		Mounts: []sandbox.Mount{
 			{Source: f.binDir, Target: "/work/bin", ReadOnly: true},
 			{Source: pocDir, Target: "/work/poc", ReadOnly: true},
+			{Target: "/work/out"},
 		},
 		Network:      false,
 		CPUs:         2,
@@ -432,6 +462,7 @@ func TestRunReproduced(t *testing.T) {
 		TmpfsMB:      64,
 	}
 	for i, s := range f.specs {
+		want.Mounts[2].Source = f.outDirs[i]
 		if !reflect.DeepEqual(s, want) {
 			t.Errorf("run %d spec:\n got %+v\nwant %+v", i, s, want)
 		}
@@ -448,8 +479,21 @@ func TestRunReproduced(t *testing.T) {
 	if _, err := os.Stat(pocDir); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("poc dir still exists after Run: %v", err)
 	}
-	if f.project.Profiles["asan"].Env["UBSAN_OPTIONS"] != "" {
+	if f.project.Profiles["asan"].Env["UBSAN_OPTIONS"] != "" || f.project.Profiles["asan"].Env["ASAN_OPTIONS"] != "detect_leaks=0" {
 		t.Error("Run changed the profile env map")
+	}
+	seen := map[string]bool{}
+	for _, d := range f.outDirs {
+		if seen[d] {
+			t.Errorf("out dir %q reused across runs", d)
+		}
+		seen[d] = true
+		if !strings.HasPrefix(d, filepath.Join(f.cacheDir, "tmp")+string(filepath.Separator)) {
+			t.Errorf("out dir %q is not under the cache dir", d)
+		}
+		if _, err := os.Stat(d); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("out dir still exists after Run: %v", err)
+		}
 	}
 }
 
@@ -460,6 +504,7 @@ func TestRunOutcomesAreCopied(t *testing.T) {
 		{ExitCode: 137, OOMKilled: true},
 		{ExitCode: 0, Stderr: strings.Repeat("x", 10000) + "END"},
 	}
+	f.reports = nil
 	res := f.run(t)
 	if res.State != result.Timeout || res.Reason != "1 of 3 runs hit the time limit" {
 		t.Errorf("got %s %q", res.State, res.Reason)
@@ -659,5 +704,153 @@ func TestTail(t *testing.T) {
 	}
 	if got := tail("xxéz", 2); got != "z" {
 		t.Errorf("got %q", got)
+	}
+}
+
+// A sanitizer report on stderr is not a crash: the reporter controls the
+// input and the program may echo it.
+func TestRunIgnoresReportOnStderr(t *testing.T) {
+	f := newFake(t)
+	f.reports = nil
+	echo := sandbox.Outcome{ExitCode: 77, Stderr: "CRASH heap-buffer-overflow"}
+	f.outcomes = []sandbox.Outcome{echo, echo, echo}
+	res := f.run(t)
+	if res.State != result.NotReproduced || res.Crashed != 0 || res.Crash != nil {
+		t.Errorf("got %s, crashed %d, crash %+v", res.State, res.Crashed, res.Crash)
+	}
+}
+
+// A report file only counts with the secret exit code.
+func TestRunIgnoresReportWithWrongExitCode(t *testing.T) {
+	f := newFake(t)
+	other := sandbox.Outcome{ExitCode: 1}
+	f.outcomes = []sandbox.Outcome{other, other, other}
+	res := f.run(t)
+	if res.State != result.NotReproduced || res.Crashed != 0 {
+		t.Errorf("got %s, crashed %d", res.State, res.Crashed)
+	}
+	for i, r := range res.Runs {
+		if !strings.Contains(r.Note, "exit code was 1") || r.Report != "" {
+			t.Errorf("run %d: note %q, report %q", i, r.Note, r.Report)
+		}
+	}
+}
+
+func TestRunRejectsCommandsTheProjectDoesNotBuild(t *testing.T) {
+	for _, cmd := range [][]string{
+		{"sh", "-c", "cat poc/report.txt >&2"},
+		{"/bin/sh"},
+		{"bin/../bin/tinyparse"},
+		{"bin/other"},
+		{"poc/input.bin"},
+	} {
+		f := newFake(t)
+		f.repro.Run.Cmd = cmd
+		res := f.run(t)
+		if res.State != result.InvalidInput || f.called("sandboxRun") != 0 || f.called("build") != 0 {
+			t.Errorf("cmd %q: got %s %q, %d runs", cmd, res.State, res.Reason, f.called("sandboxRun"))
+		}
+	}
+	for _, first := range []string{"bin/tinyparse", "./bin/tinyparse", "/work/bin/tinyparse"} {
+		if err := checkCmd([]string{first, "poc/input.bin"}, []string{"build/out/tinyparse"}); err != nil {
+			t.Errorf("%q: %v", first, err)
+		}
+	}
+}
+
+func TestMakeOutDirModes(t *testing.T) {
+	cache := t.TempDir()
+	dir, err := makeOutDir(cache, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(dir)
+	if err != nil || st.Mode().Perm() != 0o711 {
+		t.Errorf("out dir mode %v (%v), want 0711 so the run user cannot list it", st.Mode().Perm(), err)
+	}
+	st, err = os.Stat(filepath.Join(dir, "tok"))
+	if err != nil || st.Mode().Perm() != 0o733 || st.Mode()&os.ModeSetgid == 0 {
+		t.Errorf("log dir mode %v (%v), want 0733 with setgid", st.Mode(), err)
+	}
+}
+
+// The run user owns the log files and could plant a symlink to a host file
+// or a FIFO. Neither may be read or block.
+func TestCollectReportSkipsSymlinksAndFifos(t *testing.T) {
+	parse := func(s string) *result.Crash {
+		if kind, ok := strings.CutPrefix(s, "CRASH "); ok {
+			return crashOf(kind, "sig")
+		}
+		return nil
+	}
+	dir, err := makeOutDir(t.TempDir(), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := filepath.Join(t.TempDir(), "host-file")
+	if err := os.WriteFile(host, []byte("CRASH heap-buffer-overflow"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(host, filepath.Join(dir, "tok", "asan.1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "tok", "asan.2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	var crash *result.Crash
+	var report, note string
+	go func() {
+		defer close(done)
+		crash, report, note, err = collectReport(dir, "tok", 77, 77, parse)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("collectReport blocked on a FIFO")
+	}
+	if err != nil || crash != nil || report != "" {
+		t.Errorf("crash %+v, report %q, err %v", crash, report, err)
+	}
+	if strings.Count(note, "skipped") != 2 {
+		t.Errorf("note = %q, want both files skipped", note)
+	}
+}
+
+func TestWithReportChannelOptionsComeLast(t *testing.T) {
+	s := sandbox.Spec{
+		Env:    map[string]string{"ASAN_OPTIONS": "log_path=/tmp/x:exitcode=1:abort_on_error=1:"},
+		Mounts: make([]sandbox.Mount, 1, 4),
+	}
+	got := withReportChannel(s, "/out", "tok", 99)
+	if want := "log_path=/tmp/x:exitcode=1:abort_on_error=1:log_path=/work/out/tok/asan:exitcode=99:abort_on_error=0"; got.Env["ASAN_OPTIONS"] != want {
+		t.Errorf("ASAN_OPTIONS = %q\nwant %q", got.Env["ASAN_OPTIONS"], want)
+	}
+	if got.Env["UBSAN_OPTIONS"] != "log_path=/work/out/tok/ubsan:exitcode=99:abort_on_error=0" {
+		t.Errorf("UBSAN_OPTIONS = %q", got.Env["UBSAN_OPTIONS"])
+	}
+	if len(s.Env) != 1 || len(s.Mounts) != 1 {
+		t.Error("withReportChannel changed the shared spec")
+	}
+	m := got.Mounts[len(got.Mounts)-1]
+	if m.Source != "/out" || m.Target != "/work/out" || m.ReadOnly {
+		t.Errorf("out mount = %+v", m)
+	}
+}
+
+func TestNewSecret(t *testing.T) {
+	seen := map[string]bool{}
+	for range 50 {
+		tok, code, err := newSecret()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tok) != 32 || strings.Trim(tok, "0123456789abcdef") != "" || seen[tok] {
+			t.Errorf("token %q", tok)
+		}
+		seen[tok] = true
+		if code < 64 || code > 120 {
+			t.Errorf("exit code %d outside 64..120", code)
+		}
 	}
 }

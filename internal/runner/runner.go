@@ -3,12 +3,16 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -38,6 +42,23 @@ const (
 	DefaultCPUs     = 2
 	DefaultMemoryMB = 2048
 	StderrTailBytes = 8 << 10
+	ReportTailBytes = 16 << 10
+)
+
+// The sanitizer report channel.
+//
+// The verdict never comes from stdout or stderr: the reporter controls the
+// input, and a program that echoes its input would let them print a fake
+// sanitizer report. Instead every run gets a fresh out dir that the run
+// user cannot list, with a subdir whose random name is given only to the
+// sanitizer through log_path, and a random sanitizer exitcode. A crash
+// counts only when a report file exists in that subdir and the exit code
+// matches.
+const (
+	RunOutDir        = RunWorkDir + "/out"
+	MaxReportBytes   = 1 << 20
+	minSanitizerExit = 64
+	sanitizerExits   = 57 // exit codes 64 to 120
 )
 
 // deps are the calls Run makes into other packages. Tests swap them for fakes.
@@ -54,6 +75,7 @@ type deps struct {
 	sandboxRun     func(ctx context.Context, s sandbox.Spec) (sandbox.Outcome, error)
 	parse          func(stderr string) *result.Crash
 	compare        func(c spec.Claim, crash *result.Crash) (bool, []string)
+	secret         func() (token string, exitCode int, err error)
 }
 
 func realDeps() deps {
@@ -73,6 +95,7 @@ func realDeps() deps {
 		sandboxRun: sandbox.Run,
 		parse:      sanitizer.Parse,
 		compare:    claim.Compare,
+		secret:     newSecret,
 	}
 }
 
@@ -165,18 +188,11 @@ func run(ctx context.Context, o Options, d deps) (*result.Result, error) {
 	}
 	s := runSpec(project, repro, out.BinDir, pocDir)
 	for range repeat(repro.Run.Repeat) {
-		oc, err := d.sandboxRun(ctx, s)
+		ro, err := runOnce(ctx, d, cacheDir, s)
 		if err != nil {
-			return nil, fmt.Errorf("runner: run: %w", err)
+			return nil, err
 		}
-		res.Runs = append(res.Runs, result.RunOutcome{
-			ExitCode:   oc.ExitCode,
-			TimedOut:   oc.TimedOut,
-			OOMKilled:  oc.OOMKilled,
-			Duration:   oc.Duration,
-			Crash:      d.parse(oc.Stderr),
-			StderrTail: tail(oc.Stderr, StderrTailBytes),
-		})
+		res.Runs = append(res.Runs, ro)
 	}
 
 	// 7. Decide.
@@ -211,8 +227,12 @@ func loadInputs(o Options, d deps) (inputs, error) {
 	if err = d.checkAgainst(in.repro, in.project); err != nil {
 		return in, err
 	}
-	if _, ok := in.project.Profiles[in.repro.Profile]; !ok {
+	profile, ok := in.project.Profiles[in.repro.Profile]
+	if !ok {
 		return in, fmt.Errorf("project %q has no profile %q", in.project.ID, in.repro.Profile)
+	}
+	if err = checkCmd(in.repro.Run.Cmd, profile.Outputs); err != nil {
+		return in, err
 	}
 	if in.files, err = d.filePaths(in.repro, filepath.Dir(o.ReproPath)); err != nil {
 		return in, err
@@ -458,4 +478,168 @@ func mostCommon(runs []result.RunOutcome) (crash *result.Crash, count, kinds int
 		}
 	}
 	return crash, count, len(order)
+}
+
+// checkCmd allows only programs the maintainers build. A shell, or any
+// other program from the image, would let the reporter print anything.
+func checkCmd(cmd, outputs []string) error {
+	var allowed []string
+	for _, o := range outputs {
+		p := "bin/" + filepath.Base(o)
+		allowed = append(allowed, p)
+		if len(cmd) > 0 && (cmd[0] == p || cmd[0] == "./"+p || cmd[0] == RunWorkDir+"/"+p) {
+			return nil
+		}
+	}
+	got := ""
+	if len(cmd) > 0 {
+		got = cmd[0]
+	}
+	return fmt.Errorf("run.cmd[0] must be a program the project builds (%s), got %q", strings.Join(allowed, " or "), got)
+}
+
+// runOnce runs the proof of concept once, with a fresh report channel.
+func runOnce(ctx context.Context, d deps, cacheDir string, s sandbox.Spec) (result.RunOutcome, error) {
+	token, code, err := d.secret()
+	if err != nil {
+		return result.RunOutcome{}, fmt.Errorf("runner: secret: %w", err)
+	}
+	outDir, err := makeOutDir(cacheDir, token)
+	if outDir != "" {
+		defer os.RemoveAll(outDir)
+	}
+	if err != nil {
+		return result.RunOutcome{}, fmt.Errorf("runner: report dir: %w", err)
+	}
+	oc, err := d.sandboxRun(ctx, withReportChannel(s, outDir, token, code))
+	if err != nil {
+		return result.RunOutcome{}, fmt.Errorf("runner: run: %w", err)
+	}
+	crash, report, note, err := collectReport(outDir, token, code, oc.ExitCode, d.parse)
+	if err != nil {
+		return result.RunOutcome{}, fmt.Errorf("runner: %w", err)
+	}
+	return result.RunOutcome{
+		ExitCode:   oc.ExitCode,
+		TimedOut:   oc.TimedOut,
+		OOMKilled:  oc.OOMKilled,
+		Duration:   oc.Duration,
+		Crash:      crash,
+		Note:       note,
+		Report:     tail(report, ReportTailBytes),
+		StderrTail: tail(oc.Stderr, StderrTailBytes),
+	}, nil
+}
+
+// newSecret returns a random log dir name and a random sanitizer exit code.
+func newSecret() (string, int, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", 0, err
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(sanitizerExits))
+	if err != nil {
+		return "", 0, err
+	}
+	return hex.EncodeToString(b), minSanitizerExit + int(n.Int64()), nil
+}
+
+// makeOutDir makes dir (mode 0711: the run user may enter it but not list
+// it) and dir/token (mode 2733: anyone may create files, only we may list).
+// The setgid bit gives new files our group, so we can read them back even
+// though the run user owns them.
+func makeOutDir(cacheDir, token string) (string, error) {
+	root := filepath.Join(cacheDir, "tmp")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(root, "out-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o711); err != nil {
+		return dir, err
+	}
+	sub := filepath.Join(dir, token)
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		return dir, err
+	}
+	return dir, os.Chmod(sub, 0o733|os.ModeSetgid)
+}
+
+// withReportChannel returns a copy of s that mounts outDir and points the
+// sanitizers at the secret log dir and exit code. Our options come last,
+// so they win over the same options in the profile env.
+func withReportChannel(s sandbox.Spec, outDir, token string, code int) sandbox.Spec {
+	env := make(map[string]string, len(s.Env)+2)
+	for k, v := range s.Env {
+		env[k] = v
+	}
+	logDir := RunOutDir + "/" + token
+	common := fmt.Sprintf("exitcode=%d:abort_on_error=0", code)
+	env["ASAN_OPTIONS"] = joinOpts(env["ASAN_OPTIONS"], "log_path="+logDir+"/asan:"+common)
+	env["UBSAN_OPTIONS"] = joinOpts(env["UBSAN_OPTIONS"], "log_path="+logDir+"/ubsan:"+common)
+	s.Env = env
+	s.Mounts = append(append([]sandbox.Mount(nil), s.Mounts...), sandbox.Mount{Source: outDir, Target: RunOutDir})
+	return s
+}
+
+func joinOpts(base, extra string) string {
+	base = strings.TrimSuffix(base, ":")
+	if base == "" {
+		return extra
+	}
+	return base + ":" + extra
+}
+
+// collectReport reads the sanitizer log files of one run. A crash counts
+// only when a log file holds a sanitizer report and the exit code is the
+// secret one. note explains a report that was not counted.
+func collectReport(outDir, token string, want, exit int, parse func(string) *result.Crash) (crash *result.Crash, report, note string, err error) {
+	sub := filepath.Join(outDir, token)
+	entries, err := os.ReadDir(sub) // sorted by name
+	if err != nil {
+		return nil, "", "", fmt.Errorf("read report dir: %w", err)
+	}
+	var notes []string
+	files := 0
+	for _, e := range entries {
+		b, why := readReport(filepath.Join(sub, e.Name()))
+		if why != "" {
+			notes = append(notes, why)
+			continue
+		}
+		files++
+		if c := parse(string(b)); c != nil && crash == nil {
+			crash, report = c, string(b)
+		}
+	}
+	if crash != nil && exit != want {
+		notes = append(notes, fmt.Sprintf("a sanitizer report was written but the exit code was %d, not the sanitizer exit code, so it was not counted", exit))
+		crash, report = nil, ""
+	}
+	if crash == nil && files > 0 && len(notes) == 0 {
+		notes = append(notes, "the sanitizer wrote a log file without a crash report")
+	}
+	return crash, report, strings.Join(notes, "; "), nil
+}
+
+// readReport reads one log file. It never follows symlinks and never
+// blocks on a FIFO: the run user owns these files and could plant either.
+// why is set when the file is skipped.
+func readReport(path string) (b []byte, why string) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Sprintf("log file %q could not be opened, skipped", filepath.Base(path))
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || !st.Mode().IsRegular() {
+		return nil, fmt.Sprintf("log file %q is not a regular file, skipped", filepath.Base(path))
+	}
+	b, err = io.ReadAll(io.LimitReader(f, MaxReportBytes))
+	if err != nil {
+		return nil, fmt.Sprintf("log file %q could not be read, skipped", filepath.Base(path))
+	}
+	return b, ""
 }
