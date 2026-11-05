@@ -19,6 +19,7 @@ type Mount struct {
 type Spec struct {
 	Image        string
 	Cmd          []string
+	User         string // "uid:gid"; empty means the image default
 	Env          map[string]string
 	WorkDir      string
 	Mounts       []Mount
