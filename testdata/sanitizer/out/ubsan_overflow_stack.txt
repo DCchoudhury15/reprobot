@@ -1,0 +1,8 @@
+/src/ubsan_overflow.c:7:15: runtime error: signed integer overflow: 1 + 2147483647 cannot be represented in type 'int'
+    #0 0x0000004011ed in add_score /src/ubsan_overflow.c:7
+    #1 0x0000004011ed in total_score /src/ubsan_overflow.c:14
+    #2 0x00000040122e in main /src/ubsan_overflow.c:22
+    #3 0x7ed28a19fca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #4 0x7ed28a19fd64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #5 0x000000401090 in _start (/tmp/prog+0x401090)
+

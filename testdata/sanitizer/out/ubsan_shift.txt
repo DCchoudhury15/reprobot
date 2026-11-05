@@ -1,0 +1,7 @@
+/src/ubsan_kinds.c:12:11: runtime error: shift exponent 32 is too large for 32-bit type 'int'
+    #0 0x0000004011e4 in shift_left /src/ubsan_kinds.c:12
+    #1 0x00000040137f in main /src/ubsan_kinds.c:47
+    #2 0x7fc0fe72eca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #3 0x7fc0fe72ed64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #4 0x0000004010f0 in _start (/tmp/prog+0x4010f0)
+
