@@ -1,0 +1,50 @@
+=================================================================
+==1==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x75d8ef1e001b at pc 0x00000040127b bp 0x7ffd2f1e3b90 sp 0x7ffd2f1e3b88
+READ of size 1 at 0x75d8ef1e001b thread T0
+    #0 0x00000040127a in sum_bytes /src/heap_overflow_read.c:10
+    #1 0x0000004012bf in checksum /src/heap_overflow_read.c:19
+    #2 0x0000004012fa in main /src/heap_overflow_read.c:26
+    #3 0x79b8f028bca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #4 0x79b8f028bd64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #5 0x000000401120 in _start (/tmp/prog+0x401120)
+
+0x75d8ef1e001b is located 0 bytes after 11-byte region [0x75d8ef1e0010,0x75d8ef1e001b)
+allocated by thread T0 here:
+    #0 0x79b8f057008b in malloc (/usr/local/lib64/libasan.so.8+0x11a08b)
+    #1 0x0000004012a3 in checksum /src/heap_overflow_read.c:17
+    #2 0x0000004012fa in main /src/heap_overflow_read.c:26
+    #3 0x79b8f028bca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow /src/heap_overflow_read.c:10 in sum_bytes
+Shadow bytes around the buggy address:
+  0x75d8ef1dfd80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x75d8ef1dfe00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x75d8ef1dfe80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x75d8ef1dff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x75d8ef1dff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x75d8ef1e0000: fa fa 00[03]fa fa fa fa fa fa fa fa fa fa fa fa
+  0x75d8ef1e0080: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x75d8ef1e0100: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x75d8ef1e0180: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x75d8ef1e0200: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x75d8ef1e0280: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==1==ABORTING

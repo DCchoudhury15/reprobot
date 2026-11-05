@@ -1,0 +1,7 @@
+/src/ubsan_kinds.c:22:10: runtime error: member access within null pointer of type 'const struct point'
+    #0 0x000000401222 in point_x /src/ubsan_kinds.c:22
+    #1 0x0000004013ea in main /src/ubsan_kinds.c:51
+    #2 0x7ff99e97cca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #3 0x7ff99e97cd64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #4 0x0000004010f0 in _start (/tmp/prog+0x4010f0)
+

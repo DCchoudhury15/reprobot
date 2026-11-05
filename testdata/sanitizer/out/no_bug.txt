@@ -1,0 +1,7 @@
+loading config from /etc/example.conf
+warning: option 'cache' is deprecated
+error: could not parse line 3: unexpected token
+steps:
+  #1 read input
+  #2 write output
+done in 0.01s

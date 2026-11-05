@@ -1,0 +1,19 @@
+AddressSanitizer:DEADLYSIGNAL
+=================================================================
+==1==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000 (pc 0x0000004011e8 bp 0x7ffcca1ac040 sp 0x7ffcca1ac040 T0)
+==1==The signal is caused by a READ memory access.
+==1==Hint: address points to the zero page.
+    #0 0x0000004011e8 in second_value /src/null_deref.c:12
+    #1 0x0000004012de in main /src/null_deref.c:18
+    #2 0x743136a88ca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #3 0x743136a88d64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #4 0x0000004010f0 in _start (/tmp/prog+0x4010f0)
+
+==1==Register values:
+rax = 0x0000000000000000  rbx = 0x0000703134500000  rcx = 0x0000000000000001  rdx = 0x00000e06268a0005  
+rdi = 0x0000000000000000  rsi = 0x0000000000000000  rbp = 0x00007ffcca1ac040  rsp = 0x00007ffcca1ac040  
+ r8 = 0x0000000000000001   r9 = 0x00007031344f8000  r10 = 0x0000000000000007  r11 = 0x0000743136c9a1a0  
+r12 = 0x00000e06268a0000  r13 = 0x00007ffcca1ac1c8  r14 = 0x000074313738a000  r15 = 0x0000000000403dc8  
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV /src/null_deref.c:12 in second_value
+==1==ABORTING

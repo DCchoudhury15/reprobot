@@ -1,0 +1,24 @@
+=================================================================
+==1==ERROR: AddressSanitizer: attempting double-free on 0x7619671e0010 in thread T0:
+    #0 0x79f968641d4b  (/usr/local/lib64/libasan.so.8+0x118d4b)
+    #1 0x00000040122e in release /src/double_free.c:15
+    #2 0x00000040122e in main /src/double_free.c:23
+    #3 0x79f96835eca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #4 0x79f96835ed64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #5 0x0000004010f0 in _start (/tmp/prog+0x4010f0)
+
+0x7619671e0010 is located 0 bytes inside of 5-byte region [0x7619671e0010,0x7619671e0015)
+freed by thread T0 here:
+    #0 0x79f968641d4b  (/usr/local/lib64/libasan.so.8+0x118d4b)
+    #1 0x000000401226 in release /src/double_free.c:15
+    #2 0x000000401226 in main /src/double_free.c:22
+    #3 0x79f96835eca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+
+previously allocated by thread T0 here:
+    #0 0x79f96864308b in malloc (/usr/local/lib64/libasan.so.8+0x11a08b)
+    #1 0x0000004011cd in copy_name /src/double_free.c:8
+    #2 0x000000401213 in main /src/double_free.c:20
+    #3 0x79f96835eca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+
+SUMMARY: AddressSanitizer: double-free /src/double_free.c:15 in release
+==1==ABORTING

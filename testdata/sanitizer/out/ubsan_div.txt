@@ -1,0 +1,7 @@
+/src/ubsan_kinds.c:38:11: runtime error: division by zero
+    #0 0x000000401315 in divide /src/ubsan_kinds.c:38
+    #1 0x000000401445 in main /src/ubsan_kinds.c:57
+    #2 0x750b64c1bca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #3 0x750b64c1bd64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #4 0x0000004010f0 in _start (/tmp/prog+0x4010f0)
+

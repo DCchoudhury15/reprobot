@@ -1,0 +1,50 @@
+=================================================================
+==1==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x74f1551e0020 at pc 0x000000401381 bp 0x7ffc386ebc30 sp 0x7ffc386ebc28
+READ of size 4 at 0x74f1551e0020 thread T0
+    #0 0x000000401380 in store::Buffer::at(unsigned long) const /src/cpp_overflow.cc:21
+    #1 0x000000401380 in store::last_value(store::Buffer const&, unsigned long) /src/cpp_overflow.cc:26
+    #2 0x000000401380 in main /src/cpp_overflow.cc:34
+    #3 0x78d155eb1ca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #4 0x78d155eb1d64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #5 0x000000401130 in _start (/tmp/prog+0x401130)
+
+0x74f1551e0020 is located 0 bytes after 16-byte region [0x74f1551e0010,0x74f1551e0020)
+allocated by thread T0 here:
+    #0 0x78d15652cd0b in operator new[](unsigned long) (/usr/local/lib64/libasan.so.8+0x11ad0b)
+    #1 0x0000004012ea in store::Buffer::Buffer(unsigned long) /src/cpp_overflow.cc:9
+    #2 0x0000004012ea in main /src/cpp_overflow.cc:33
+    #3 0x78d155eb1ca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow /src/cpp_overflow.cc:21 in store::Buffer::at(unsigned long) const
+Shadow bytes around the buggy address:
+  0x74f1551dfd80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x74f1551dfe00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x74f1551dfe80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x74f1551dff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x74f1551dff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x74f1551e0000: fa fa 00 00[fa]fa fa fa fa fa fa fa fa fa fa fa
+  0x74f1551e0080: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x74f1551e0100: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x74f1551e0180: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x74f1551e0200: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x74f1551e0280: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==1==ABORTING

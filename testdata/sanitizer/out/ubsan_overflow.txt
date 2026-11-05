@@ -1,0 +1,1 @@
+/src/ubsan_overflow.c:7:15: runtime error: signed integer overflow: 1 + 2147483647 cannot be represented in type 'int'

@@ -1,0 +1,10 @@
+/src/ubsan_kinds.c:33:9: runtime error: load of misaligned address 0x7ffe0b9df3c1 for type 'const int', which requires 4 byte alignment
+0x7ffe0b9df3c1: note: pointer points here
+ 00 00 00  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  20 f5 9d 0b fe 7f 00 00  18 2b 21 29 02
+              ^ 
+    #0 0x0000004012e4 in read_misaligned /src/ubsan_kinds.c:33
+    #1 0x000000401497 in main /src/ubsan_kinds.c:55
+    #2 0x7ee629251ca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #3 0x7ee629251d64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+    #4 0x0000004010f0 in _start (/tmp/prog+0x4010f0)
+

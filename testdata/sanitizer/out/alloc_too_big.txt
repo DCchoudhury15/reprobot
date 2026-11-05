@@ -1,0 +1,10 @@
+=================================================================
+==1==ERROR: AddressSanitizer: requested allocation size 0x100000000000 (0x100000001000 after adjustments for alignment, red zones etc.) exceeds maximum supported size of 0x10000000000 (thread T0)
+    #0 0x7e1cfc52d08b in malloc (/usr/local/lib64/libasan.so.8+0x11a08b)
+    #1 0x0000004011a6 in make_table /src/alloc_too_big.c:8
+    #2 0x0000004011a6 in main /src/alloc_too_big.c:14
+    #3 0x7e1cfc248ca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)
+
+==1==HINT: if you don't care about these errors you may set allocator_may_return_null=1
+SUMMARY: AddressSanitizer: allocation-size-too-big /src/alloc_too_big.c:8 in make_table
+==1==ABORTING
