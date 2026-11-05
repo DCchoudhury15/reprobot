@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reprobot</title>
+<meta name="description" content="reprobot checks security reports by running them: it builds the exact commit with sanitizers and runs the proof of concept in a sandbox with no network.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2308090f'/%3E%3Cpath d='M9 10l7 6-7 6' stroke='%23ff6b4a' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M18 22h6' stroke='%233ecf8e' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #08090f;
+    --panel: #0f111b;
+    --panel-2: #151827;
+    --line: #20253a;
+    --line-2: #2f3653;
+    --text: #e9ebf5;
+    --muted: #9298b6;
+    --dim: #5f6585;
+    --crash: #ff6b4a;
+    --crash-2: #ff9a80;
+    --ok: #3ecf8e;
+    --warn: #f5b942;
+    --link: #8ea2ff;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --sans: "IBM Plex Sans", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 var(--sans);
+    overflow-x: hidden;
+  }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: var(--mono); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+  @media (min-width: 720px) { .wrap { padding: 0 32px; } }
+
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0; gap: 16px;
+  }
+  .brand { font: 600 18px var(--mono); color: var(--text); letter-spacing: -0.01em; }
+  .brand span { color: var(--crash); }
+  .top nav { display: flex; gap: 18px; font-size: 14px; flex-wrap: wrap; }
+  .top nav a { color: var(--muted); }
+  @media (max-width: 560px) { .top nav a:not(:last-child) { display: none; } }
+
+  .hero { padding: 56px 0 40px; }
+  .eyebrow { font: 500 13px var(--mono); color: var(--crash-2); letter-spacing: 0.06em; text-transform: uppercase; }
+  h1 {
+    font-size: clamp(34px, 7vw, 60px); line-height: 1.05; letter-spacing: -0.03em;
+    margin: 14px 0 20px; max-width: 16ch;
+  }
+  .lede { font-size: clamp(17px, 2.4vw, 20px); color: var(--muted); max-width: 62ch; margin: 0 0 28px; }
+  .lede strong { color: var(--text); font-weight: 600; }
+  .buttons { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 11px 18px; border-radius: 8px; font-weight: 600; font-size: 15px;
+    border: 1px solid var(--line-2); color: var(--text); background: var(--panel);
+  }
+  .btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .btn:hover { text-decoration: none; border-color: var(--muted); }
+
+  section { padding: 56px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: clamp(24px, 4vw, 34px); line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 14px; max-width: 26ch; }
+  .sub { color: var(--muted); max-width: 64ch; margin: 0 0 28px; }
+
+  .facts { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 820px) { .facts { grid-template-columns: repeat(3, 1fr); } }
+  .fact { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  .fact .when { font: 500 13px var(--mono); color: var(--dim); }
+  .fact p { margin: 8px 0 10px; }
+  .fact a { font-size: 14px; }
+
+  .terms { display: grid; gap: 16px; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { .terms { grid-template-columns: 1fr 1fr; } }
+  .term { background: #0b0d16; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-width: 0; }
+  .term .bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line); font: 500 13px var(--mono); color: var(--muted);
+  }
+  .tag { font: 600 12px var(--mono); padding: 2px 8px; border-radius: 99px; white-space: nowrap; }
+  .tag.crash { background: rgba(255,107,74,.14); color: var(--crash-2); }
+  .tag.ok { background: rgba(62,207,142,.14); color: var(--ok); }
+  .tag.bad { background: rgba(245,185,66,.14); color: var(--warn); }
+  pre {
+    margin: 0; padding: 16px; overflow-x: auto; font-size: 13.5px; line-height: 1.6; color: #cdd2e8;
+  }
+  pre .k { color: var(--dim); }
+  pre .r { color: var(--crash-2); }
+  pre .g { color: var(--ok); }
+  pre .y { color: var(--warn); }
+
+  .steps { counter-reset: s; display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 820px) { .steps { grid-template-columns: repeat(5, 1fr); } }
+  .step { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .step::before {
+    counter-increment: s; content: "0" counter(s);
+    font: 600 13px var(--mono); color: var(--crash-2);
+  }
+  .step h3 { margin: 8px 0 6px; font-size: 16px; }
+  .step p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+  .guards { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 820px) { .guards { grid-template-columns: repeat(3, 1fr); } }
+  .guard { border-left: 2px solid var(--crash); padding: 4px 0 4px 16px; }
+  .guard h3 { margin: 0 0 6px; font-size: 16px; }
+  .guard p { margin: 0; color: var(--muted); font-size: 15px; }
+  .proof { margin-top: 26px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; color: var(--muted); }
+  .proof strong { color: var(--text); }
+
+  .table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .table td { padding: 12px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+  .table td:first-child { font: 500 13.5px var(--mono); white-space: nowrap; padding-left: 0; }
+  .table td:last-child { color: var(--muted); }
+  .scroll { overflow-x: auto; }
+
+  .start { display: grid; gap: 16px; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { .start { grid-template-columns: 1fr 1fr; } }
+
+  footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--dim); font-size: 14px; }
+  footer .row { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">repro<span>bot</span></div>
+    <nav>
+      <a href="#demo">Demo</a>
+      <a href="#how">How it works</a>
+      <a href="#start">Quick start</a>
+      <a href="https://github.com/DCchoudhury15/reprobot">GitHub</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <div class="eyebrow">Security report triage for maintainers</div>
+    <h1>Run the report before you read it.</h1>
+    <p class="lede">reprobot builds the exact commit with sanitizers and runs the proof of concept in a sandbox with no network. <strong>A report that crashes as claimed gets read first. A report that does not crash, does not.</strong> No model decides anything: it either crashes or it does not.</p>
+    <div class="buttons">
+      <a class="btn primary" href="https://github.com/DCchoudhury15/reprobot">Source on GitHub</a>
+      <a class="btn" href="https://github.com/DCchoudhury15/reprobot/blob/main/docs/DESIGN.md">Read the design</a>
+    </div>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2>A report that reads well and a real bug look the same on paper.</h2>
+    <p class="sub">Open source projects now get more security reports than they can read, and many are automated reports about bugs that do not exist. Checking each one by hand is the work that is burning maintainers out.</p>
+    <div class="facts">
+      <div class="fact">
+        <div class="when">31 Jan 2026</div>
+        <p>curl ended its bug bounty, which had run since 2019, after a flood of low-quality automated reports.</p>
+        <a href="https://bleepingcomputer.com/news/security/curl-ending-bug-bounty-program-after-flood-of-ai-slop-reports/">BleepingComputer</a>
+      </div>
+      <div class="fact">
+        <div class="when">1 Oct 2026</div>
+        <p>Google's open source vulnerability reward program stopped taking new product submissions, citing a flood of invalid automated reports.</p>
+        <a href="https://labs.cloudsecurityalliance.org/research/csa-research-note-oss-vrp-pause-ai-report-flood-20261010-csa/">Cloud Security Alliance</a>
+      </div>
+      <div class="fact">
+        <div class="when">The fix</div>
+        <p>Ask for a reproducer and run it. A made-up bug cannot produce a crash. reprobot makes that rule cheap to enforce.</p>
+        <a href="https://github.com/DCchoudhury15/reprobot/blob/main/docs/DESIGN.md">How it works</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="demo">
+  <div class="wrap">
+    <h2>Same reproducer, two commits.</h2>
+    <p class="sub">The test fixture is a small C parser that copies up to 255 bytes into a 16 byte heap buffer. Real output from <code>reprobot run</code> on the vulnerable commit and on the commit that adds the length check.</p>
+    <div class="terms">
+      <div class="term">
+        <div class="bar"><span>vulnerable commit d2ea08b</span><span class="tag crash">REPRODUCED_AS_CLAIMED</span></div>
+<pre><span class="k">$</span> reprobot run --project project.yaml repro.yaml
+<span class="k">state:</span>     <span class="r">REPRODUCED_AS_CLAIMED</span>
+<span class="k">reason:</span>    crashed in 3 of 3 runs, as claimed
+
+<span class="k">crash:</span>     address heap-buffer-overflow, WRITE of size 64
+<span class="k">frames:</span>
+  #1 parse_header /src/tinyparse.c:21
+  #2 parse_file /src/tinyparse.c:35
+  #3 main /src/tinyparse.c:46
+<span class="k">signature:</span> d3c66c5eb2dafff2
+           heap-buffer-overflow|parse_header|parse_file|main
+
+<span class="k">runtime:</span>   runc
+<span class="k">duration:</span>  2.2s</pre>
+      </div>
+      <div class="term">
+        <div class="bar"><span>fix commit c364f11</span><span class="tag ok">NOT_REPRODUCED</span></div>
+<pre><span class="k">$</span> reprobot run --project project.yaml repro.yaml
+<span class="k">state:</span>     <span class="g">NOT_REPRODUCED</span>
+<span class="k">reason:</span>    no crash in 3 runs
+
+<span class="k">commit:</span>    c364f11
+<span class="k">runtime:</span>   runc
+<span class="k">duration:</span>  2.1s
+
+
+<span class="k"># the fix is reverted: back to</span>
+<span class="k"># REPRODUCED_AS_CLAIMED with the same</span>
+<span class="k"># signature, d3c66c5eb2dafff2</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>From a repro.yaml to a verdict.</h2>
+    <p class="sub">The reporter picks a commit, a build profile by name, a command and the input files. The maintainers own the build profiles, so a reporter cannot change build flags or patch the source.</p>
+    <div class="steps">
+      <div class="step"><h3>Validate</h3><p>Strict schema, safe paths, size limits. The command must be a program the project builds.</p></div>
+      <div class="step"><h3>Claim check</h3><p>Do the functions, files and line numbers the report cites exist at that commit? Checked with git, no build needed.</p></div>
+      <div class="step"><h3>Build</h3><p>The exact commit with ASan or UBSan, no network, cached by commit, profile and image digest.</p></div>
+      <div class="step"><h3>Run</h3><p>Several times, each in a fresh container: no network, read-only root, no capabilities, unprivileged user, time and memory limits.</p></div>
+      <div class="step"><h3>Verdict</h3><p>The crash kind and stack are compared with the claim. Same stack, same signature, so duplicates group together.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>A pasted report cannot fake a crash.</h2>
+    <p class="sub">The reporter controls the input, and many programs print bad input in their error messages. So reprobot never reads crashes from stdout or stderr.</p>
+    <div class="guards">
+      <div class="guard"><h3>Only built programs run</h3><p>A shell, or any other program from the image, is rejected before anything runs.</p></div>
+      <div class="guard"><h3>A secret log directory</h3><p>The sanitizer writes its report into a directory with a random 128-bit name that the program cannot list.</p></div>
+      <div class="guard"><h3>A secret exit code</h3><p>Each run gets a random sanitizer exit code. A report only counts when the program exits with it.</p></div>
+    </div>
+    <div class="proof"><strong>Tested on real builds:</strong> a program that echoes a real captured ASan report on the fixed commit gives <code>NOT_REPRODUCED</code>, and a reporter's <code>sh -c</code> command gives <code>INVALID_INPUT</code>. Before this defence, both came back as reproduced.</div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Verdicts.</h2>
+    <p class="sub">reprobot only judges claims it can test. A real logic bug is never labelled fake.</p>
+    <div class="scroll">
+      <table class="table">
+        <tr><td>REPRODUCED_AS_CLAIMED</td><td>Crashed with the claimed kind and frame.</td></tr>
+        <tr><td>REPRODUCED_DIFFERENT</td><td>Crashed, but not as the report says.</td></tr>
+        <tr><td>NOT_REPRODUCED</td><td>No run crashed.</td></tr>
+        <tr><td>FLAKY</td><td>Some runs crashed, some did not.</td></tr>
+        <tr><td>TIMEOUT / OOM</td><td>Hit a limit. May be a real hang, so it is never called fake.</td></tr>
+        <tr><td>BUILD_FAILED</td><td>The profile did not build at that commit.</td></tr>
+        <tr><td>INVALID_INPUT</td><td>Bad file, unknown commit, or a command the project does not build.</td></tr>
+        <tr><td>OUT_OF_SCOPE</td><td>The claim is not a crash, so running it cannot test it.</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <h2>Try it.</h2>
+    <p class="sub">Needs Go 1.26, git and Docker. The repo has a complete example project with a planted bug.</p>
+    <div class="start">
+      <div class="term">
+        <div class="bar"><span>install and run</span></div>
+<pre>go install github.com/DCchoudhury15/reprobot/cmd/reprobot@latest
+
+reprobot run --project project.yaml repro.yaml
+reprobot run --json --project project.yaml repro.yaml
+
+<span class="k"># the service: intake API, Postgres job queue, workers</span>
+reprobot serve  --db $DATABASE_URL --data ./data --projects ./projects
+reprobot worker --db $DATABASE_URL --data ./data --projects ./projects</pre>
+      </div>
+      <div class="term">
+        <div class="bar"><span>repro.yaml</span></div>
+<pre>version: 1
+project: tinyparse
+commit: d2ea08b
+profile: asan
+run:
+  cmd: ["bin/tinyparse", "poc/input.bin"]
+  timeout_seconds: 20
+  repeat: 3
+files:
+  - input.bin
+claim:
+  sanitizer: address
+  kind: heap-buffer-overflow
+  frame: parse_header</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap row">
+    <span>Early and open source under the Apache License 2.0. Next: OSS-Fuzz project import and a GitHub App for private vulnerability reports.</span>
+    <span>Built by <a href="https://divyanshuchoudhury.vercel.app">Divyanshu Choudhury</a></span>
+  </div>
+</footer>
+</body>
+</html>

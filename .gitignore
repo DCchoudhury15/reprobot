@@ -2,3 +2,4 @@ bin/
 .cache/
 *.test
 .claude/
+site/.vercel/

@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Formatting
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+      - name: Vet
+        run: |
+          go vet ./...
+          go vet -tags e2e ./...
+      - name: Pull images
+        run: |
+          docker pull -q gcc:15
+          docker pull -q postgres:18-alpine
+      - name: Unit and database tests
+        run: go test -count=1 ./...
+      - name: End-to-end tests (real sanitizer builds in the sandbox)
+        run: go test -count=1 -tags e2e ./internal/runner/
+      - name: No containers left behind
+        run: |
+          test -z "$(docker ps -aq --filter label=reprobot=1)"
+          test -z "$(docker ps -aq --filter label=reprobot-test=1)"
