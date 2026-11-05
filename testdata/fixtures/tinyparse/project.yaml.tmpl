@@ -1,0 +1,17 @@
+version: 1
+id: tinyparse
+repo: {{REPO}}
+image: gcc:15
+profiles:
+  asan:
+    build: make CFLAGS="-fsanitize=address -g -O1 -fno-omit-frame-pointer"
+    outputs: [tinyparse]
+    env:
+      ASAN_OPTIONS: detect_leaks=0:symbolize=1
+  ubsan:
+    build: make CFLAGS="-fsanitize=undefined -fno-sanitize-recover=all -g -O1"
+    outputs: [tinyparse]
+limits:
+  cpus: 1
+  memory_mb: 1024
+  build_timeout_seconds: 300

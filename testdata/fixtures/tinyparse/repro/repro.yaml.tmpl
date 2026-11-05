@@ -1,0 +1,17 @@
+version: 1
+project: tinyparse
+commit: {{COMMIT}}
+profile: asan
+run:
+  cmd: ["bin/tinyparse", "poc/input.bin"]
+  timeout_seconds: 20
+  repeat: 3
+files:
+  - input.bin
+claim:
+  sanitizer: address
+  kind: heap-buffer-overflow
+  frame: parse_header
+  text: |
+    The memcpy in parse_header in tinyparse.c copies up to 255 bytes into a
+    16 byte heap buffer.
