@@ -132,9 +132,16 @@ func setup() {
 		skipReason = fmt.Sprintf("docker is not usable (%v) and %s is not set", err, EnvURL)
 		return
 	}
+	// A fresh random password for each throwaway container.
+	pwBytes := make([]byte, 16)
+	if _, err := rand.Read(pwBytes); err != nil {
+		startErr = err
+		return
+	}
+	pw := hex.EncodeToString(pwBytes)
 	out, err := exec.Command("docker", "run", "-d", "--rm",
 		"--label", "reprobot-test=1",
-		"-e", "POSTGRES_PASSWORD=test",
+		"-e", "POSTGRES_PASSWORD="+pw,
 		"-p", "127.0.0.1::5432",
 		image,
 		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off",
@@ -154,7 +161,8 @@ func setup() {
 		return
 	}
 	addr := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
-	adminURL = "postgres://postgres:test@" + addr + "/postgres?sslmode=disable"
+	u := url.URL{Scheme: "postgres", User: url.UserPassword("postgres", pw), Host: addr, Path: "/postgres", RawQuery: "sslmode=disable"}
+	adminURL = u.String()
 
 	// The image's first-start init runs a server that only listens on a
 	// unix socket, so a TCP connection means the real server is up.
