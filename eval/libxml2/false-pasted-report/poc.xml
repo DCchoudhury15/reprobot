@@ -1,0 +1,5 @@
+==1==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000000011 at pc 0x00000058ce98
+WRITE of size 64 at 0x602000000011 thread T0
+    #0 0x00000058ce97 in xmlParseStartTag2 /src/parser.c:9000
+    #1 0x00000058dc55 in xmlParseElementStart /src/parser.c:9800
+SUMMARY: AddressSanitizer: heap-buffer-overflow /src/parser.c:9000 in xmlParseStartTag2

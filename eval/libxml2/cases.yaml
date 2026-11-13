@@ -1,0 +1,36 @@
+# Evaluation cases for libxml2. Each dir holds a repro.yaml and its files.
+#
+# real: the repro.yaml names the last vulnerable commit. The same report is
+# then run again on the fix commit and must not crash there.
+# false: reports about bugs that do not exist, written for this evaluation.
+project: project.yaml
+real:
+  - dir: cve-2025-49794
+    id: CVE-2025-49794
+    fix: 71e1e8af5ee46dad1b57bb96cfbf1c3ad21fbd7b
+    input: test file from the upstream fix commit
+  - dir: cve-2025-49796
+    id: CVE-2025-49796
+    fix: 71e1e8af5ee46dad1b57bb96cfbf1c3ad21fbd7b
+    input: test file from the upstream fix commit
+  - dir: cve-2025-49795
+    id: CVE-2025-49795
+    fix: 499bcb78ab389f60c2fd634ce410d4bb85c18765
+    input: test file from the upstream fix commit, with its broken first tag closed
+  - dir: cve-2025-24928
+    id: CVE-2025-24928
+    fix: 8c8753ad5280ee13aee5eec9b0f6eee2ed920f57
+    input: written for this evaluation from the fix diff
+  - dir: cve-2023-28484
+    id: CVE-2023-28484
+    fix: e4f85f1bd2eb34d9b49da9154a4cc3a1bc284f68
+    input: test file from the upstream fix commit
+false:
+  - dir: false-long-text
+    about: harmless long text, claims a heap overflow in a real function
+  - dir: false-made-up-function
+    about: claims a stack overflow in a function that does not exist
+    finding: does not appear anywhere in the code
+  - dir: false-pasted-report
+    about: the input is a pasted sanitizer report that xmllint prints back
+    stderr: "AddressSanitizer: heap-buffer-overflow"

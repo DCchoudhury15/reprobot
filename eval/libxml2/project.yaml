@@ -1,0 +1,19 @@
+version: 1
+id: libxml2
+# GitHub mirror of https://gitlab.gnome.org/GNOME/libxml2 (same commit ids).
+repo: https://github.com/GNOME/libxml2.git
+image: gcc:15
+profiles:
+  asan:
+    build: >-
+      ./autogen.sh --disable-shared --without-python --without-zlib
+      --without-lzma --with-schematron
+      CFLAGS="-fsanitize=address -g -O1 -fno-omit-frame-pointer"
+      && make -j2 xmllint
+    outputs: [xmllint]
+    env:
+      ASAN_OPTIONS: detect_leaks=0:symbolize=1
+limits:
+  cpus: 2
+  memory_mb: 2048
+  build_timeout_seconds: 900

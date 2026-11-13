@@ -1,0 +1,17 @@
+version: 1
+project: libxml2
+commit: 71e1e8af5ee46dad1b57bb96cfbf1c3ad21fbd7b
+profile: asan
+run:
+  cmd: ["bin/xmllint", "--noout", "poc/poc.xml"]
+  timeout_seconds: 30
+  repeat: 3
+files:
+  - poc.xml
+claim:
+  sanitizer: address
+  kind: stack-buffer-overflow
+  frame: xmlParseAttributeBuffer
+  text: |
+    xmlParseAttributeBuffer in parser.c copies the attribute value into a
+    fixed 65536 byte stack buffer without a length check.

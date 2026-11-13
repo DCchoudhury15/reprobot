@@ -70,6 +70,14 @@ go test ./...                           # unit and database tests (Docker)
 go test -tags e2e ./internal/runner/    # real sanitizer builds in the sandbox
 ```
 
+## Tested on real bugs
+
+`eval/` runs reprobot on five fixed libxml2 CVEs. Each report gives
+`REPRODUCED_AS_CLAIMED` on the last vulnerable commit and `NOT_REPRODUCED` on
+the fix commit. Three reports about bugs that do not exist give
+`NOT_REPRODUCED`. See [eval/README.md](eval/README.md) and
+[the results](eval/libxml2/RESULTS.md).
+
 ## Status
 
 Early. Working: the CLI, sandboxed builds and runs, ASan and UBSan parsing,

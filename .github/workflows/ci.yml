@@ -22,6 +22,7 @@ jobs:
         run: |
           go vet ./...
           go vet -tags e2e ./...
+          go vet -tags eval ./eval/
       - name: Pull images
         run: |
           docker pull -q gcc:15
