@@ -885,3 +885,73 @@ func TestRunNotesUnconfirmedKill(t *testing.T) {
 		}
 	}
 }
+
+func TestRunSetsSite(t *testing.T) {
+	var asked []string
+	line, lineErr := "\tmemcpy(buf,   name, len);\r", error(nil)
+	check := func() *result.Result {
+		t.Helper()
+		f := newFake(t)
+		d := f.deps()
+		d.parse = siteParse
+		d.sourceLine = func(ctx context.Context, mirror, sha, rel string, n int) (string, error) {
+			asked = append(asked, fmt.Sprintf("%s %s %s:%d", mirror, sha, rel, n))
+			return line, lineErr
+		}
+		res, err := run(context.Background(), Options{ProjectPath: "/p/project.yaml", ReproPath: f.reproPath, CacheDir: f.cacheDir}, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	res := check()
+	if want := []string{"/mirror " + testSHA + " lib/tinyparse.c:12"}; !reflect.DeepEqual(asked, want) {
+		t.Errorf("source lines read: %q, want %q", asked, want)
+	}
+	if res.Crash == nil || res.Crash.SiteText != "parse_header|memcpy(buf, name, len);" || len(res.Crash.Site) != 16 {
+		t.Fatalf("crash = %+v", res.Crash)
+	}
+
+	// A line that cannot be read leaves the site empty and the verdict as is.
+	lineErr = errors.New("no such file")
+	res = check()
+	if res.State != result.ReproducedAsClaimed || res.Crash == nil || res.Crash.Site != "" || res.Crash.SiteText != "" {
+		t.Errorf("unreadable line: state %s, crash %+v", res.State, res.Crash)
+	}
+}
+
+// siteParse returns a crash whose first project frame has a file and line.
+func siteParse(stderr string) *result.Crash {
+	if !strings.HasPrefix(stderr, "CRASH ") {
+		return nil
+	}
+	return &result.Crash{Sanitizer: "address", Kind: "heap-buffer-overflow", Signature: "sig",
+		Frames: []result.Frame{
+			{Index: 0, Function: "__interceptor_memcpy", Module: "/lib/x86_64-linux-gnu/libasan.so.8"},
+			{Index: 1, Function: "parse_header", File: "/src/lib/tinyparse.c", Line: 12},
+			{Index: 2, Function: "main", File: "/src/main.c", Line: 3},
+		}}
+}
+
+func TestRepoPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/src/a.c":           "a.c",
+		"/src/lib/../b.c":    "b.c",
+		"/src/lib/x/y.c":     "lib/x/y.c",
+		"lib/a.c":            "lib/a.c",
+		"./a.c":              "a.c",
+		"/usr/include/x.h":   "",
+		"/srcx/a.c":          "",
+		"/src":               "",
+		"/src/../etc/passwd": "",
+		"../a.c":             "",
+		"lib/../../a.c":      "",
+		"":                   "",
+	} {
+		got, ok := repoPath(in)
+		if got != want || ok != (want != "") {
+			t.Errorf("repoPath(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+}

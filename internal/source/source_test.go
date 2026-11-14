@@ -394,3 +394,43 @@ func TestExtractTarAllowsInnerSymlinks(t *testing.T) {
 		t.Fatalf("a/f = %q, %v", b, err)
 	}
 }
+
+func TestLine(t *testing.T) {
+	f := testutil.NewTinyparseRepo(t)
+	ctx := context.Background()
+	mirror, _, err := Resolve(ctx, t.TempDir(), f.RepoDir, f.Vuln)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(testutil.FixtureDir(), "vuln", "tinyparse.c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	for _, n := range []int{1, len(lines) / 2, len(lines)} {
+		got, err := Line(ctx, mirror, f.Vuln, "tinyparse.c", n)
+		if err != nil || got != lines[n-1] {
+			t.Errorf("line %d = %q, %v; want %q", n, got, err, lines[n-1])
+		}
+	}
+	if got, err := Line(ctx, mirror, f.Vuln, "./tinyparse.c", 1); err != nil || got != lines[0] {
+		t.Errorf("./tinyparse.c line 1 = %q, %v", got, err)
+	}
+	for _, c := range []struct {
+		sha, rel string
+		n        int
+	}{
+		{f.Vuln, "tinyparse.c", len(lines) + 2},
+		{f.Vuln, "tinyparse.c", 0},
+		{f.Vuln, "missing.c", 1},
+		{f.Vuln, "../tinyparse.c", 1},
+		{f.Vuln, "/tinyparse.c", 1},
+		{f.Vuln, ".", 1},
+		{f.Vuln[:7], "tinyparse.c", 1},
+		{"HEAD", "tinyparse.c", 1},
+	} {
+		if got, err := Line(ctx, mirror, c.sha, c.rel, c.n); err == nil {
+			t.Errorf("Line(%q, %q, %d) = %q, want an error", c.sha, c.rel, c.n, got)
+		}
+	}
+}

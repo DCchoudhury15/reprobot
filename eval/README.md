@@ -28,8 +28,9 @@ Needs Docker, git and network access to clone the project. Useful settings:
 
 Results: [libxml2/RESULTS.md](libxml2/RESULTS.md). Five CVEs, all reproduced
 on the vulnerable commit and all gone on the fix commit. Three false reports,
-none reproduced. A cold run (clone plus nine builds) takes about six minutes
-on a laptop; one build takes about 35 seconds and a cached check 2 seconds.
+none reproduced. A cold run (clone plus nine builds) takes about four to six
+minutes on a laptop; one build takes 25 to 35 seconds and a cached check 1 to
+2 seconds.
 
 Each case is a folder in `libxml2/` with a `repro.yaml` and its input files.
 `libxml2/cases.yaml` lists the fix commit of each bug and where its input
@@ -50,9 +51,14 @@ The three false reports were also written for this evaluation:
 
 - CVE-2025-49795 and CVE-2025-49796 are two different bugs, but both are a
   SEGV with the same top three frames, so they get the same signature. They
-  crash on different lines of the same function. The signature does not use
-  line numbers because they change between commits. Grouping would merge
-  these two reports.
+  crash on different lines of the same function: `switch (eval->type) {` and
+  `if ((node->ns == NULL) || ...)`. The signature does not use line numbers
+  because they change between commits, so it first grouped these two as
+  duplicates. reprobot now also records the crash line (the function plus
+  the source text of the line, read from the commit), and lists reports with
+  the same signature but a different line as "same stack, different line"
+  instead. The eval fails if two different bugs would be listed as
+  duplicates.
 - The titles of CVE-2025-49794 and CVE-2025-49796 name
   `xmlSchematronReportOutput`. In the real stack the crash is in
   `xmlSchematronFormatReport`, and the named function is not in the top

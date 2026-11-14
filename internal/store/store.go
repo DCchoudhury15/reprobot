@@ -257,9 +257,9 @@ func (s *Store) Complete(ctx context.Context, jobID int64, workerID string, res 
 	if err != nil {
 		return err
 	}
-	var signature string
+	var signature, site string
 	if res.Crash != nil {
-		signature = res.Crash.Signature
+		signature, site = res.Crash.Signature, res.Crash.Site
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -280,9 +280,9 @@ func (s *Store) Complete(ctx context.Context, jobID int64, workerID string, res 
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO results (report_id, state, signature, result)
-		VALUES ($1, $2, nullif($3, ''), $4)`,
-		reportID, string(res.State), cleanText(signature), json.RawMessage(jsonbSafe(data)),
+		INSERT INTO results (report_id, state, signature, site, result)
+		VALUES ($1, $2, nullif($3, ''), nullif($4, ''), $5)`,
+		reportID, string(res.State), cleanText(signature), cleanText(site), json.RawMessage(jsonbSafe(data)),
 	); err != nil {
 		return err
 	}
@@ -329,6 +329,7 @@ type Report struct {
 	MaxAttempts int
 	LastError   string
 	Signature   string
+	Site        string
 	Result      *result.Result // nil until the job is done
 }
 
@@ -339,7 +340,7 @@ func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT r.id, r.project, coalesce(r.reporter, ''), coalesce(r.repro_hash, ''), r.dir, r.created_at,
 			coalesce(j.id, 0), coalesce(j.state, ''), coalesce(j.attempts, 0), coalesce(j.max_attempts, 0),
-			coalesce(j.last_error, ''), coalesce(res.signature, ''), res.result
+			coalesce(j.last_error, ''), coalesce(res.signature, ''), coalesce(res.site, ''), res.result
 		FROM reports r
 		LEFT JOIN LATERAL (
 			SELECT * FROM jobs WHERE jobs.report_id = r.id ORDER BY jobs.id DESC LIMIT 1
@@ -348,7 +349,7 @@ func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 		WHERE r.id = $1`, id,
 	).Scan(&r.ID, &r.Project, &r.Reporter, &r.ReproHash, &r.Dir, &r.CreatedAt,
 		&r.JobID, &r.JobState, &r.Attempts, &r.MaxAttempts,
-		&r.LastError, &r.Signature, &raw)
+		&r.LastError, &r.Signature, &r.Site, &raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -368,21 +369,44 @@ func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 const maxDuplicates = 100
 
 // Duplicates returns other reports of the same project whose result has the
-// same crash signature, oldest first. An empty signature never matches.
-func (s *Store) Duplicates(ctx context.Context, project, signature string, excludeReportID uuid.UUID) ([]uuid.UUID, error) {
+// same crash signature, oldest first, in two lists. dups crash on the same
+// site, or one of the two has no site. related share the signature but
+// crash on a different line: the same call path, maybe a different bug.
+// An empty signature never matches. Each list holds at most maxDuplicates.
+func (s *Store) Duplicates(ctx context.Context, project, signature, site string, excludeReportID uuid.UUID) (dups, related []uuid.UUID, err error) {
 	if signature == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT res.report_id FROM results res
-		JOIN reports r ON r.id = res.report_id
-		WHERE r.project = $1 AND res.signature = $2 AND res.report_id <> $3
-		ORDER BY r.created_at, r.id
-		LIMIT $4`, project, signature, excludeReportID, maxDuplicates)
+		SELECT id, other FROM (
+			SELECT res.report_id AS id, r.created_at,
+				(nullif($4, '') IS NOT NULL AND res.site IS NOT NULL AND res.site <> $4) AS other,
+				row_number() OVER (
+					PARTITION BY (nullif($4, '') IS NOT NULL AND res.site IS NOT NULL AND res.site <> $4)
+					ORDER BY r.created_at, r.id) AS n
+			FROM results res
+			JOIN reports r ON r.id = res.report_id
+			WHERE r.project = $1 AND res.signature = $2 AND res.report_id <> $3
+		) m
+		WHERE n <= $5
+		ORDER BY n`, project, signature, excludeReportID, site, maxDuplicates)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var other bool
+		if err := rows.Scan(&id, &other); err != nil {
+			return nil, nil, err
+		}
+		if other {
+			related = append(related, id)
+		} else {
+			dups = append(dups, id)
+		}
+	}
+	return dups, related, rows.Err()
 }
 
 // cleanText makes s storable in a text column: valid UTF-8 without NUL.

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -125,6 +126,48 @@ func isFullSHA(s string) bool {
 		}
 	}
 	return true
+}
+
+// maxLineFileBytes caps the file Line reads from git.
+const maxLineFileBytes = 16 << 20
+
+// Line returns line n (1-based) of the file at path rel in commit sha,
+// without the line ending. rel is relative to the repo root. It reads from
+// the mirror only, so it needs no network and touches no work tree.
+func Line(ctx context.Context, mirrorDir, sha, rel string, n int) (string, error) {
+	if !isFullSHA(sha) {
+		return "", fmt.Errorf("source: line needs a full commit sha, got %q", sha)
+	}
+	if n <= 0 {
+		return "", fmt.Errorf("source: bad line number %d", n)
+	}
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	if rel == "." || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") ||
+		strings.ContainsFunc(rel, unicode.IsControl) {
+		return "", fmt.Errorf("source: bad path %q", rel)
+	}
+	obj := sha + ":" + rel
+	out, err := git(ctx, "-C", mirrorDir, "cat-file", "-s", obj)
+	if err != nil {
+		return "", fmt.Errorf("source: %s: %w", rel, err)
+	}
+	if size, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64); err != nil || size > maxLineFileBytes {
+		return "", fmt.Errorf("source: %s is larger than %d bytes", rel, maxLineFileBytes)
+	}
+	data, err := git(ctx, "-C", mirrorDir, "cat-file", "blob", obj)
+	if err != nil {
+		return "", fmt.Errorf("source: %s: %w", rel, err)
+	}
+	for i := 1; ; i++ {
+		line, rest, found := bytes.Cut(data, []byte("\n"))
+		if i == n {
+			return strings.TrimSuffix(string(line), "\r"), nil
+		}
+		if !found {
+			return "", fmt.Errorf("source: %s has fewer than %d lines", rel, n)
+		}
+		data = rest
+	}
 }
 
 // Export writes the tree at sha into dest, without the .git directory.

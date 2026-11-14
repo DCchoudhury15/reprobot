@@ -39,6 +39,14 @@ type Crash struct {
 	Signature string `json:"signature"`
 	// SignatureText is the human-readable input that was hashed.
 	SignatureText string `json:"signature_text"`
+	// Site names the crashing line: the first project function plus the
+	// source text of the line it crashed on, whitespace collapsed. Two bugs
+	// in the same function on the same call path share a signature but not
+	// a site. Line numbers are left out so the same bug at another commit
+	// keeps its site. Empty when the line could not be read.
+	Site string `json:"site,omitempty"`
+	// SiteText is the human-readable input that was hashed for Site.
+	SiteText string `json:"site_text,omitempty"`
 }
 
 // RunOutcome is one execution of the proof of concept.

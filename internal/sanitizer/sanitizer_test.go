@@ -359,3 +359,46 @@ func TestTrimArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestSite(t *testing.T) {
+	site := func(fn, line string) string {
+		c := &result.Crash{}
+		SetSite(c, result.Frame{Function: fn}, line)
+		return c.Site
+	}
+	a := site("xmlSchematronFormatReport", "            switch (eval->type) {")
+	if len(a) != 16 {
+		t.Fatalf("site %q", a)
+	}
+	if b := site("xmlSchematronFormatReport", "switch (eval->type)   {\r"); b != a {
+		t.Errorf("whitespace changed the site: %q vs %q", b, a)
+	}
+	if b := site("xmlSchematronFormatReport", "if ((node->ns == NULL) || (node->ns->prefix == NULL))"); b == a {
+		t.Error("another line in the same function gave the same site")
+	}
+	if b := site("otherFunction", "switch (eval->type) {"); b == a {
+		t.Error("the same text in another function gave the same site")
+	}
+	if b := site("f", " \t "); b != "" {
+		t.Errorf("blank line gave site %q", b)
+	}
+}
+
+func TestSiteFrame(t *testing.T) {
+	c := &result.Crash{Frames: []result.Frame{
+		{Function: "__interceptor_strlen", Module: "/lib/x86_64-linux-gnu/libasan.so.8"},
+		{Function: "parse", File: "/src/p.c", Line: 9},
+	}}
+	if f, ok := SiteFrame(c); !ok || f.Function != "parse" || f.Line != 9 {
+		t.Errorf("SiteFrame = %+v, %v", f, ok)
+	}
+	// The top project frame has no line: no site, not a deeper frame.
+	c.Frames[1].Line = 0
+	c.Frames = append(c.Frames, result.Frame{Function: "main", File: "/src/m.c", Line: 3})
+	if f, ok := SiteFrame(c); ok {
+		t.Errorf("SiteFrame without a line = %+v", f)
+	}
+	if _, ok := SiteFrame(nil); ok {
+		t.Error("SiteFrame(nil) found a frame")
+	}
+}

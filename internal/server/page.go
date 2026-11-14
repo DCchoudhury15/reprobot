@@ -59,6 +59,7 @@ pre { background: #f4f4f4; padding: .5rem; overflow-x: auto; white-space: pre-wr
 <tr><th>Kind</th><td>{{.Kind}}</td></tr>
 <tr><th>Sanitizer</th><td>{{.Sanitizer}}</td></tr>
 <tr><th>Signature</th><td><code>{{.Signature}}</code></td></tr>
+{{if .Site}}<tr><th>Crash line</th><td><code>{{.Site}}</code> {{.SiteText}}</td></tr>{{end}}
 </table>
 {{end}}
 {{if .Frames}}
@@ -73,6 +74,11 @@ pre { background: #f4f4f4; padding: .5rem; overflow-x: auto; white-space: pre-wr
 <h2>Duplicates</h2>
 {{if .Duplicates}}<ul>{{range .Duplicates}}<li><a href="/reports/{{.}}">{{.}}</a></li>{{end}}</ul>
 {{else}}<p>None found.</p>{{end}}
+{{if .Related}}
+<h2>Same stack, different line</h2>
+<p>These crash with the same kind and top frames but on another line. They may be a different bug.</p>
+<ul>{{range .Related}}<li><a href="/reports/{{.}}">{{.}}</a></li>{{end}}</ul>
+{{end}}
 </body>
 </html>
 `))

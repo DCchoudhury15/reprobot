@@ -84,7 +84,14 @@ limits:
    signature from the crash kind and the top 3 frames that belong to the
    project (skip sanitizer runtime and libc frames). Compare with the claim.
 6. **Dedup.** Look the signature up for the project. Same signature means
-   same bug.
+   same bug, with one refinement: the runner also reads the source line of
+   the top project frame at that commit and hashes the function plus that
+   line's text (whitespace collapsed) into a crash site. Two reports with
+   the same signature but different sites crash on different lines of the
+   same function, so they are listed as related (same stack, different
+   line), not as duplicates. A report without a site (the line could not be
+   read) matches either way. The line text, not the line number, is used so
+   the same bug at another commit keeps its site.
 
 ## Result states
 

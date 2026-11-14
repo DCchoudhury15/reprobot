@@ -76,6 +76,7 @@ type deps struct {
 	parse          func(stderr string) *result.Crash
 	compare        func(c spec.Claim, crash *result.Crash) (bool, []string)
 	secret         func() (token string, exitCode int, err error)
+	sourceLine     func(ctx context.Context, mirrorDir, sha, rel string, n int) (string, error)
 }
 
 func realDeps() deps {
@@ -96,6 +97,7 @@ func realDeps() deps {
 		parse:      sanitizer.Parse,
 		compare:    claim.Compare,
 		secret:     newSecret,
+		sourceLine: source.Line,
 	}
 }
 
@@ -198,6 +200,7 @@ func run(ctx context.Context, o Options, d deps) (*result.Result, error) {
 	// 7. Decide.
 	state, crash, reason, cmp := Decide(repro.Claim, res.Runs, d.compare)
 	res.Crash = crash
+	setSite(ctx, d, mirror, sha, crash)
 	res.ClaimFindings = append(res.ClaimFindings, cmp...)
 	for _, r := range res.Runs {
 		if r.Crash != nil {
@@ -478,6 +481,47 @@ func mostCommon(runs []result.RunOutcome) (crash *result.Crash, count, kinds int
 		}
 	}
 	return crash, count, len(order)
+}
+
+// setSite names the crashing line from the source at sha. The site only
+// refines duplicate grouping, so a line that cannot be read leaves it empty
+// and never changes the verdict.
+func setSite(ctx context.Context, d deps, mirror, sha string, crash *result.Crash) {
+	if crash == nil || d.sourceLine == nil {
+		return
+	}
+	f, ok := sanitizer.SiteFrame(crash)
+	if !ok {
+		return
+	}
+	rel, ok := repoPath(f.File)
+	if !ok {
+		return
+	}
+	line, err := d.sourceLine(ctx, mirror, sha, rel, f.Line)
+	if err != nil {
+		return
+	}
+	sanitizer.SetSite(crash, f, line)
+}
+
+// repoPath turns a file name from a sanitizer frame into a path relative
+// to the repo root. Builds see the source at build.SourceDir; a relative
+// name is taken as relative to it. Anything else is not project source.
+func repoPath(file string) (string, bool) {
+	file = filepath.ToSlash(file)
+	if strings.HasPrefix(file, "/") {
+		rel, found := strings.CutPrefix(filepath.ToSlash(filepath.Clean(file)), build.SourceDir+"/")
+		if !found {
+			return "", false
+		}
+		file = rel
+	}
+	file = filepath.ToSlash(filepath.Clean(file))
+	if file == "." || file == ".." || strings.HasPrefix(file, "../") {
+		return "", false
+	}
+	return file, true
 }
 
 // checkCmd allows only programs the maintainers build. A shell, or any

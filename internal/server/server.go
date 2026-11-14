@@ -406,6 +406,8 @@ type reportView struct {
 	LastError   string         `json:"last_error,omitempty"`
 	Result      *result.Result `json:"result,omitempty"`
 	Duplicates  []string       `json:"duplicates"`
+	// Related reports share the signature but crash on another line.
+	Related []string `json:"related"`
 }
 
 // loadReport returns nil, nil when the id is malformed or unknown.
@@ -434,13 +436,17 @@ func (s *Server) loadReport(ctx context.Context, rawID string) (*reportView, err
 		LastError:   rep.LastError,
 		Result:      rep.Result,
 		Duplicates:  []string{},
+		Related:     []string{},
 	}
-	dups, err := s.Store.Duplicates(ctx, rep.Project, rep.Signature, rep.ID)
+	dups, related, err := s.Store.Duplicates(ctx, rep.Project, rep.Signature, rep.Site, rep.ID)
 	if err != nil {
 		return nil, err
 	}
 	for _, d := range dups {
 		v.Duplicates = append(v.Duplicates, d.String())
+	}
+	for _, d := range related {
+		v.Related = append(v.Related, d.String())
 	}
 	return v, nil
 }

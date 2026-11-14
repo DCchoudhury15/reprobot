@@ -4,7 +4,8 @@
 //
 // For every real bug the same report must crash as claimed on the last
 // vulnerable commit and must not crash on the fix commit. Reports about
-// bugs that do not exist must not crash at all.
+// bugs that do not exist must not crash at all. Two different real bugs
+// must never be listed as duplicates of each other.
 //
 //	go test -tags eval -timeout 60m -v ./eval/
 //
@@ -73,9 +74,14 @@ func runProject(t *testing.T, name string) {
 	fmt.Fprintf(&out, "# %s results\n\n", name)
 	out.WriteString("Written by `go test -tags eval ./eval/`. Times include the build when it was not cached.\n\n")
 	out.WriteString("## Real bugs\n\n")
-	out.WriteString("| Bug | Vulnerable commit | Verdict | Crash | Signature | Time | Fix commit | Verdict | Time |\n")
-	out.WriteString("|---|---|---|---|---|---|---|---|---|\n")
+	out.WriteString("| Bug | Vulnerable commit | Verdict | Crash | Signature | Crash line | Time | Fix commit | Verdict | Time |\n")
+	out.WriteString("|---|---|---|---|---|---|---|---|---|---|\n")
 
+	type bug struct {
+		id    string
+		crash *result.Crash
+	}
+	var bugs []bug
 	for _, c := range cf.Real {
 		t.Run(c.Dir, func(t *testing.T) {
 			repro := filepath.Join(dir, c.Dir, "repro.yaml")
@@ -91,15 +97,30 @@ func runProject(t *testing.T, name string) {
 			if fixed.Inputs.Commit != c.Fix {
 				t.Errorf("fix run used commit %s, want %s", fixed.Inputs.Commit, c.Fix)
 			}
-			crash, sig := "", ""
+			crash, sig, line := "", "", ""
 			if vuln.Crash != nil {
 				crash = vuln.Crash.Kind + " in " + topFrame(vuln.Crash)
 				sig = "`" + vuln.Crash.Signature + "`"
+				if _, text, ok := strings.Cut(vuln.Crash.SiteText, "|"); ok {
+					line = "`" + strings.ReplaceAll(text, "|", `\|`) + "`"
+				}
+				bugs = append(bugs, bug{c.ID, vuln.Crash})
 			}
-			fmt.Fprintf(&out, "| %s | `%s` | %s | %s | %s | %s | `%s` | %s | %s |\n",
-				c.ID, short(vuln.Inputs.Commit), vuln.State, crash, sig, took(vuln),
+			fmt.Fprintf(&out, "| %s | `%s` | %s | %s | %s | %s | %s | `%s` | %s | %s |\n",
+				c.ID, short(vuln.Inputs.Commit), vuln.State, crash, sig, line, took(vuln),
 				short(c.Fix), fixed.State, took(fixed))
 		})
+	}
+	// The same rule the store uses: same signature, and the same site or
+	// no site to tell them apart.
+	for i, a := range bugs {
+		for _, b := range bugs[i+1:] {
+			if a.crash.Signature == b.crash.Signature &&
+				(a.crash.Site == "" || b.crash.Site == "" || a.crash.Site == b.crash.Site) {
+				t.Errorf("%s and %s are different bugs but would be listed as duplicates (signature %s, sites %q and %q)",
+					a.id, b.id, a.crash.Signature, a.crash.SiteText, b.crash.SiteText)
+			}
+		}
 	}
 
 	out.WriteString("\n## Reports about bugs that do not exist\n\n")

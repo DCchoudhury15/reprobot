@@ -56,6 +56,10 @@ type Output struct {
 	Runtime     string // runsc | runc
 }
 
+// SourceDir is where the build sees the source tree. Sanitizer frames name
+// project files by this path.
+const SourceDir = "/src"
+
 // Build defaults, used when the project limits are zero.
 const (
 	DefaultCPUs           = 2
@@ -250,8 +254,8 @@ func buildSpec(p *spec.Project, prof spec.Profile, srcDir string) sandbox.Spec {
 		Cmd:          []string{"sh", "-c", prof.Build},
 		User:         fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		Env:          env,
-		WorkDir:      "/src",
-		Mounts:       []sandbox.Mount{{Source: srcDir, Target: "/src"}},
+		WorkDir:      SourceDir,
+		Mounts:       []sandbox.Mount{{Source: srcDir, Target: SourceDir}},
 		Network:      false,
 		CPUs:         cpus,
 		MemoryMB:     mem,

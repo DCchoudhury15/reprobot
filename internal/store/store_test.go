@@ -118,8 +118,8 @@ func TestMigrateConcurrentAndRepeated(t *testing.T) {
 	if err := stores[0].Migrate(ctx); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
-	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 1 {
-		t.Errorf("schema_migrations rows = %d, want 1", n)
+	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 2 {
+		t.Errorf("schema_migrations rows = %d, want 2", n)
 	}
 }
 
@@ -440,10 +440,12 @@ func finish(t *testing.T, st *store.Store, reportID uuid.UUID, res *result.Resul
 	}
 }
 
-func crashResult(signature string) *result.Result {
+func crashResult(signature string) *result.Result { return siteResult(signature, "") }
+
+func siteResult(signature, site string) *result.Result {
 	return &result.Result{
 		State: result.ReproducedAsClaimed,
-		Crash: &result.Crash{Kind: "heap-buffer-overflow", Signature: signature},
+		Crash: &result.Crash{Kind: "heap-buffer-overflow", Signature: signature, Site: site},
 	}
 }
 
@@ -468,12 +470,12 @@ func TestDuplicates(t *testing.T) {
 
 	check := func(project, sig string, exclude uuid.UUID, want ...uuid.UUID) {
 		t.Helper()
-		got, err := st.Duplicates(ctx, project, sig, exclude)
+		got, related, err := st.Duplicates(ctx, project, sig, "", exclude)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if fmt.Sprint(got) != fmt.Sprint(want) {
-			t.Errorf("Duplicates(%s, %q, %v) = %v, want %v", project, sig, exclude, got, want)
+		if fmt.Sprint(got) != fmt.Sprint(want) || len(related) != 0 {
+			t.Errorf("Duplicates(%s, %q, %v) = %v, %v; want %v", project, sig, exclude, got, related, want)
 		}
 	}
 	check("p1", "sig-1", a, b)
@@ -489,6 +491,81 @@ func TestDuplicates(t *testing.T) {
 	}
 	if n := count(t, st, "SELECT count(*) FROM results WHERE signature IS NOT NULL AND signature = ''"); n != 0 {
 		t.Errorf("%d results store an empty signature instead of NULL", n)
+	}
+}
+
+func TestDuplicatesSplitBySite(t *testing.T) {
+	st := storetest.New(t)
+	ctx := context.Background()
+
+	a, _ := newReport(t, st, "p")
+	finish(t, st, a, siteResult("sig", "line-1"))
+	b, _ := newReport(t, st, "p")
+	finish(t, st, b, siteResult("sig", "line-2"))
+	c, _ := newReport(t, st, "p") // no site: cannot be told apart
+	finish(t, st, c, siteResult("sig", ""))
+	d, _ := newReport(t, st, "p")
+	finish(t, st, d, siteResult("sig", "line-1"))
+
+	for _, tc := range []struct {
+		site          string
+		exclude       uuid.UUID
+		dups, related []uuid.UUID
+	}{
+		{"line-1", a, []uuid.UUID{c, d}, []uuid.UUID{b}},
+		{"line-2", b, []uuid.UUID{c}, []uuid.UUID{a, d}},
+		{"", c, []uuid.UUID{a, b, d}, nil},
+		{"line-3", uuid.Nil, []uuid.UUID{c}, []uuid.UUID{a, b, d}},
+	} {
+		dups, related, err := st.Duplicates(ctx, "p", "sig", tc.site, tc.exclude)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fmt.Sprint(dups) != fmt.Sprint(tc.dups) || fmt.Sprint(related) != fmt.Sprint(tc.related) {
+			t.Errorf("site %q: dups %v related %v, want %v and %v", tc.site, dups, related, tc.dups, tc.related)
+		}
+	}
+
+	rep, err := st.GetReport(ctx, b)
+	if err != nil || rep.Site != "line-2" {
+		t.Errorf("GetReport(b) site = %q, %v", rep.Site, err)
+	}
+	if n := count(t, st, "SELECT count(*) FROM results WHERE site IS NULL"); n != 1 {
+		t.Errorf("%d results without a site, want 1 (empty site stored as NULL)", n)
+	}
+}
+
+func TestDuplicatesCap(t *testing.T) {
+	st := storetest.New(t)
+	ctx := context.Background()
+	siteOf := map[uuid.UUID]string{}
+	for i := range 205 {
+		id, _ := newReport(t, st, "p")
+		site := "same"
+		if i%2 == 1 {
+			site = "other"
+		}
+		finish(t, st, id, siteResult("sig", site))
+		siteOf[id] = site
+	}
+	dups, related, err := st.Duplicates(ctx, "p", "sig", "same", uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 103 on the same line and 102 on another: each list is capped on its
+	// own, so many of one kind never hide the other.
+	if len(dups) != 100 || len(related) != 100 {
+		t.Fatalf("got %d dups and %d related, want 100 and 100", len(dups), len(related))
+	}
+	for _, id := range dups {
+		if siteOf[id] != "same" {
+			t.Errorf("dup %v has site %q", id, siteOf[id])
+		}
+	}
+	for _, id := range related {
+		if siteOf[id] != "other" {
+			t.Errorf("related %v has site %q", id, siteOf[id])
+		}
 	}
 }
 

@@ -442,6 +442,8 @@ func TestReportPageEscapes(t *testing.T) {
 			Kind:      `<img src=x onerror="alert(2)">`,
 			Frames:    []result.Frame{{Index: 0, Function: "<b>parse_header</b>", File: "a.c", Line: 3}},
 			Signature: "sig",
+			Site:      "site1",
+			SiteText:  "f|<i>x</i>",
 		},
 		ClaimFindings: []string{"<script>alert(3)</script>"},
 	})
@@ -450,7 +452,7 @@ func TestReportPageEscapes(t *testing.T) {
 		t.Fatalf("status %d: %s", resp.StatusCode, out)
 	}
 	page := string(out)
-	if strings.Contains(page, "<script") || strings.Contains(page, "<img") || strings.Contains(page, "<b>") {
+	if strings.Contains(page, "<script") || strings.Contains(page, "<img") || strings.Contains(page, "<b>") || strings.Contains(page, "<i>") {
 		t.Errorf("page contains unescaped markup:\n%s", page)
 	}
 	for _, want := range []string{
@@ -459,6 +461,8 @@ func TestReportPageEscapes(t *testing.T) {
 		"&lt;b&gt;parse_header&lt;/b&gt; a.c:3",
 		"REPRODUCED_DIFFERENT",
 		"sig",
+		"site1",
+		"f|&lt;i&gt;x&lt;/i&gt;",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page does not contain %q", want)
@@ -474,15 +478,22 @@ func TestReportPageEscapes(t *testing.T) {
 
 func TestReportJSONListsDuplicates(t *testing.T) {
 	e := newEnv(t)
-	crash := func(sig string) *result.Result {
-		return &result.Result{State: result.ReproducedAsClaimed, Crash: &result.Crash{Kind: "heap-buffer-overflow", Signature: sig}}
+	crash := func(sig, site string) *result.Result {
+		return &result.Result{State: result.ReproducedAsClaimed, Crash: &result.Crash{Kind: "heap-buffer-overflow", Signature: sig, Site: site}}
 	}
-	a := finish(t, e.st, "tinyparse", crash("sig-1"))
-	b := finish(t, e.st, "tinyparse", crash("sig-1"))
-	c := finish(t, e.st, "other", crash("sig-1"))
+	a := finish(t, e.st, "tinyparse", crash("sig-1", ""))
+	b := finish(t, e.st, "tinyparse", crash("sig-1", ""))
+	c := finish(t, e.st, "other", crash("sig-1", ""))
 	d := finish(t, e.st, "tinyparse", &result.Result{State: result.NotReproduced})
+	// Same signature: f crashes on another line than s1 and s2, and g has
+	// no site, so it cannot be told apart from either.
+	s1 := finish(t, e.st, "tinyparse", crash("sig-2", "site-a"))
+	s2 := finish(t, e.st, "tinyparse", crash("sig-2", "site-a"))
+	f := finish(t, e.st, "tinyparse", crash("sig-2", "site-b"))
+	g := finish(t, e.st, "tinyparse", crash("sig-2", ""))
 
-	want := map[string][]string{a: {b}, b: {a}, c: {}, d: {}}
+	want := map[string][]string{a: {b}, b: {a}, c: {}, d: {}, s1: {s2, g}, s2: {s1, g}, f: {g}, g: {s1, s2, f}}
+	wantRelated := map[string][]string{s1: {f}, s2: {f}, f: {s1, s2}}
 	for id, dups := range want {
 		resp, out := e.get(t, "/v1/reports/"+id)
 		if resp.StatusCode != http.StatusOK {
@@ -492,6 +503,7 @@ func TestReportJSONListsDuplicates(t *testing.T) {
 			State      string         `json:"state"`
 			Result     *result.Result `json:"result"`
 			Duplicates []string       `json:"duplicates"`
+			Related    []string       `json:"related"`
 		}](t, out)
 		if v.State != store.JobDone || v.Result == nil {
 			t.Errorf("%s: state %s result %+v", id, v.State, v.Result)
@@ -499,11 +511,22 @@ func TestReportJSONListsDuplicates(t *testing.T) {
 		if fmt.Sprint(v.Duplicates) != fmt.Sprint(dups) {
 			t.Errorf("%s: duplicates %v, want %v", id, v.Duplicates, dups)
 		}
+		if v.Related == nil || fmt.Sprint(v.Related) != fmt.Sprint(append([]string{}, wantRelated[id]...)) {
+			t.Errorf("%s: related %v, want %v", id, v.Related, wantRelated[id])
+		}
 	}
 
 	resp, out := e.get(t, "/reports/"+a)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(out), `href="/reports/`+b+`"`) {
 		t.Errorf("page of %s does not link duplicate %s:\n%s", a, b, out)
+	}
+	resp, out = e.get(t, "/reports/"+f)
+	if page := string(out); resp.StatusCode != http.StatusOK || !strings.Contains(page, "Same stack, different line") ||
+		!strings.Contains(page, `href="/reports/`+s1+`"`) {
+		t.Errorf("page of %s does not list related %s:\n%s", f, s1, out)
+	}
+	if _, out = e.get(t, "/reports/"+a); strings.Contains(string(out), "Same stack, different line") {
+		t.Errorf("page of %s shows an empty related list", a)
 	}
 }
 

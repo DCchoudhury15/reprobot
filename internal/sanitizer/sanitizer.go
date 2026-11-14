@@ -279,6 +279,29 @@ func TrimArgs(fn string) string {
 	return s
 }
 
+// SiteFrame returns the first project frame when it has a file and line:
+// the frame whose source line names the crash site.
+func SiteFrame(c *result.Crash) (result.Frame, bool) {
+	pf := ProjectFrames(c)
+	if len(pf) == 0 || pf[0].File == "" || pf[0].Line <= 0 {
+		return result.Frame{}, false
+	}
+	return pf[0], true
+}
+
+// SetSite fills in c.Site from f, the SiteFrame, and the source text of its
+// line. A blank line leaves the site empty: the line number pointed at
+// nothing useful.
+func SetSite(c *result.Crash, f result.Frame, line string) {
+	text := strings.Join(strings.Fields(line), " ")
+	if text == "" {
+		return
+	}
+	c.SiteText = TrimArgs(f.Function) + "|" + text
+	sum := sha256.Sum256([]byte(c.SiteText))
+	c.Site = hex.EncodeToString(sum[:])[:16]
+}
+
 // finish fills in the signature.
 func finish(c *result.Crash) *result.Crash {
 	var parts []string
