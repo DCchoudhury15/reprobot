@@ -1,9 +1,9 @@
 // Package server is the HTTP intake API and the result pages.
 //
-// There is no authentication in v0. Anyone who can reach the address can
-// submit reports and read every result and reporter name. Run it on
-// 127.0.0.1 (the default of `reprobot serve`) or behind a proxy that
-// authenticates users. See docs/SERVICE.md.
+// With Tokens set, every route except /healthz needs an API token. Without
+// them anyone who can reach the address can submit reports and read every
+// result and reporter name, so `reprobot serve` then stays on loopback. See
+// docs/SERVICE.md.
 package server
 
 import (
@@ -46,20 +46,27 @@ const (
 
 var projectID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-// Server serves the API. It has no authentication; see the package doc.
+// Server serves the API.
 type Server struct {
 	Store        *store.Store
-	DataDir      string // reports go to DataDir/reports/<id>
-	ProjectsDir  string // holds <project>.yaml files
-	MaxBodyBytes int64  // 0 means DefaultMaxBodyBytes
+	DataDir      string  // reports go to DataDir/reports/<id>
+	ProjectsDir  string  // holds <project>.yaml files
+	MaxBodyBytes int64   // 0 means DefaultMaxBodyBytes
+	Tokens       *Tokens // nil means no authentication
 }
 
 // Handler returns the HTTP handler with all routes.
 func (s *Server) Handler() http.Handler {
+	protect := func(h http.HandlerFunc) http.Handler {
+		if s.Tokens == nil {
+			return h
+		}
+		return s.requireToken(h)
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/reports", s.createReport)
-	mux.HandleFunc("GET /v1/reports/{id}", s.reportJSON)
-	mux.HandleFunc("GET /reports/{id}", s.reportPage)
+	mux.Handle("POST /v1/reports", protect(s.createReport))
+	mux.Handle("GET /v1/reports/{id}", protect(s.reportJSON))
+	mux.Handle("GET /reports/{id}", protect(s.reportPage))
 	mux.HandleFunc("GET /healthz", s.healthz)
 	return mux
 }

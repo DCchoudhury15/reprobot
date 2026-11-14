@@ -35,7 +35,9 @@ type env struct {
 	dataDir string
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { t.Helper(); return newEnvTokens(t, nil) }
+
+func newEnvTokens(t *testing.T, tokens *server.Tokens) *env {
 	t.Helper()
 	st := storetest.New(t)
 	projects := t.TempDir()
@@ -46,7 +48,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e := &env{st: st, dataDir: t.TempDir()}
-	srv := &server.Server{Store: st, DataDir: e.dataDir, ProjectsDir: projects}
+	srv := &server.Server{Store: st, DataDir: e.dataDir, ProjectsDir: projects, Tokens: tokens}
 	e.ts = httptest.NewServer(srv.Handler())
 	t.Cleanup(e.ts.Close)
 	return e

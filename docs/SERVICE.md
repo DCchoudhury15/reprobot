@@ -4,13 +4,32 @@
 takes queued reports and checks them with the runner. Both use one Postgres
 database and the same data directory.
 
-## No authentication in v0
+## Tokens
 
-There is no authentication and no rate limit. Anyone who can reach the
-server can submit reports and read every result, including reporter names.
-`serve` listens on `127.0.0.1:8080` by default. Keep it on loopback, or put
-it behind a reverse proxy that authenticates users. `serve` logs a warning
-when `--addr` is not a loopback address.
+Reports describe bugs that are not public yet, so the API should not be
+open. Make a token per person or system:
+
+```sh
+reprobot token alice >> /etc/reprobot/tokens
+```
+
+The token is printed once, on stderr. The file line, on stdout, is the name
+and the sha256 of the token, so the tokens file holds no secrets. Start
+`serve` with `--tokens /etc/reprobot/tokens`. Then every route except
+`/healthz` needs a token:
+
+- `Authorization: Bearer TOKEN`, or
+- Basic auth with the token as the password (any user name), so a browser
+  can open the result pages.
+
+A missing or wrong token gets `401`, before the upload is read. To remove a
+token, delete its line and restart `serve`.
+
+Every token can submit and read every report: there are no roles and no
+per-user access yet, and no rate limit. Without `--tokens` the API is open;
+`serve` then refuses a non-loopback `--addr` unless `--insecure-no-auth` is
+given, for use behind a reverse proxy that authenticates users. Serve over
+TLS (for example behind that proxy) so tokens are not sent in clear text.
 
 ## Running
 
@@ -19,6 +38,7 @@ reprobot serve \
   --db postgres://reprobot@localhost/reprobot \
   --data /var/lib/reprobot \
   --projects /etc/reprobot/projects \
+  --tokens /etc/reprobot/tokens \
   --addr 127.0.0.1:8080
 
 reprobot worker \
@@ -60,10 +80,11 @@ reprobot worker \
 - Only the `project` field of `repro.yaml` is checked here: it must name a
   file in `--projects`. The worker validates the rest.
 - Success is `202` with `{"report_id", "job_id", "status_url"}`. Errors are
-  `{"error": "..."}` with status `400`, `413` or `500`.
+  `{"error": "..."}` with status `400`, `401`, `413` or `500`.
 
 ```sh
-curl -H 'Idempotency-Key: report-42' \
+curl -H "Authorization: Bearer $REPROBOT_TOKEN" \
+  -H 'Idempotency-Key: report-42' \
   -F repro=@repro.yaml -F file=@input.bin -F reporter=alice \
   http://127.0.0.1:8080/v1/reports
 ```

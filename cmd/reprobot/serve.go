@@ -5,12 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,20 +61,32 @@ func openStore(ctx context.Context, url string) (*store.Store, error) {
 	return st, nil
 }
 
-// serveCmd runs the intake API. It has no authentication, so it listens on
-// 127.0.0.1 unless told otherwise.
+// serveCmd runs the intake API. With --tokens every route but /healthz
+// needs a token; without it the API is open, so it stays on loopback.
 func serveCmd(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	dbURL := fs.String("db", "", "Postgres URL (required)")
 	dataDir := fs.String("data", "", "data directory; reports are stored in DIR/reports (required)")
 	projectsDir := fs.String("projects", "", "directory with one <project>.yaml per project (required)")
-	addr := fs.String("addr", "127.0.0.1:8080", "listen address; there is no authentication, so keep it on loopback")
+	addr := fs.String("addr", "127.0.0.1:8080", "listen address")
+	tokensPath := fs.String("tokens", "", "tokens file (see `reprobot token`); without it the API is open and only a loopback --addr is allowed")
+	noAuth := fs.Bool("insecure-no-auth", false, "allow a non-loopback --addr without --tokens, for use behind a proxy that authenticates users")
 	if code := parseFlags(fs, args, "db", "data", "projects"); code >= 0 {
 		return code
 	}
 	fail := func(err error) int {
 		fmt.Fprintln(os.Stderr, "reprobot serve:", err)
 		return 1
+	}
+	if err := checkAuthConfig(*addr, *tokensPath, *noAuth); err != nil {
+		return fail(err)
+	}
+	var tokens *server.Tokens
+	if *tokensPath != "" {
+		var err error
+		if tokens, err = server.LoadTokens(*tokensPath); err != nil {
+			return fail(err)
+		}
 	}
 	if err := checkDir(*projectsDir); err != nil {
 		return fail(err)
@@ -89,7 +103,7 @@ func serveCmd(args []string) int {
 	}
 	defer st.Close()
 
-	srv := &server.Server{Store: st, DataDir: *dataDir, ProjectsDir: *projectsDir}
+	srv := &server.Server{Store: st, DataDir: *dataDir, ProjectsDir: *projectsDir, Tokens: tokens}
 	hs := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -102,8 +116,8 @@ func serveCmd(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if !isLoopback(*addr) {
-		slog.Warn("listening on a non-loopback address; the API has no authentication", "addr", *addr)
+	if tokens == nil && !isLoopback(*addr) {
+		slog.Warn("listening on a non-loopback address without tokens; the API is open to anyone who can reach it", "addr", *addr)
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.Serve(ln) }()
@@ -197,6 +211,36 @@ func checkDir(dir string) error {
 		return fmt.Errorf("%s is not a directory", dir)
 	}
 	return nil
+}
+
+// checkAuthConfig refuses to serve an open API on a non-loopback address
+// unless the operator says a proxy in front does the authentication.
+func checkAuthConfig(addr, tokensPath string, noAuth bool) error {
+	switch {
+	case tokensPath != "" && noAuth:
+		return errors.New("--tokens and --insecure-no-auth cannot be used together")
+	case tokensPath == "" && !noAuth && !isLoopback(addr):
+		return fmt.Errorf("--addr %s is not a loopback address: give --tokens, or --insecure-no-auth if a proxy authenticates users", addr)
+	}
+	return nil
+}
+
+// tokenCmd prints a new API token. The tokens file line goes to stdout, so
+// `reprobot token NAME >> tokens` adds it; the token itself goes to stderr
+// and is shown only this once.
+func tokenCmd(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		fmt.Fprintln(stderr, "usage: reprobot token NAME >> tokens-file")
+		return 2
+	}
+	token, line, err := server.NewToken(args[0])
+	if err != nil {
+		fmt.Fprintln(stderr, "reprobot token:", err)
+		return 2
+	}
+	fmt.Fprintf(stderr, "token for %s (shown once, keep it secret):\n%s\n", args[0], token)
+	fmt.Fprintln(stdout, line)
+	return 0
 }
 
 func isLoopback(addr string) bool {
