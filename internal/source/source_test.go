@@ -98,9 +98,35 @@ func TestResolveFetchFailureIsNotUnknownRef(t *testing.T) {
 	if err := os.RemoveAll(f.RepoDir); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = Resolve(context.Background(), cache, f.RepoDir, f.Vuln)
-	if err == nil || errors.Is(err, ErrUnknownRef) {
-		t.Fatalf("fetch failure: err = %v, want a non ErrUnknownRef error", err)
+	// A tag and a full id the mirror does not have both need a fetch.
+	for _, ref := range []string{"HEAD", strings.Repeat("ab", 20)} {
+		_, _, err = Resolve(context.Background(), cache, f.RepoDir, ref)
+		if err == nil || errors.Is(err, ErrUnknownRef) {
+			t.Fatalf("fetch failure for %q: err = %v, want a non ErrUnknownRef error", ref, err)
+		}
+	}
+}
+
+// A full commit id that the mirror already has resolves without the
+// source repo, so a repeated check works offline.
+func TestResolveFullSHANeedsNoFetch(t *testing.T) {
+	f := testutil.NewTinyparseRepo(t)
+	cache := t.TempDir()
+	if _, _, err := Resolve(context.Background(), cache, f.RepoDir, "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(f.RepoDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{f.Vuln, f.Fix, f.Revert} {
+		_, sha, err := Resolve(context.Background(), cache, f.RepoDir, want)
+		if err != nil || sha != want {
+			t.Errorf("Resolve(%s) = %q, %v; want it to resolve from the mirror", want, sha, err)
+		}
+	}
+	// A short id of the same commit still fetches, and so fails here.
+	if _, _, err := Resolve(context.Background(), cache, f.RepoDir, f.Vuln[:12]); err == nil {
+		t.Error("short id resolved without a fetch")
 	}
 }
 

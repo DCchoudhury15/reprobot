@@ -51,6 +51,18 @@ func Resolve(ctx context.Context, cacheDir, repo, ref string) (mirrorDir, sha st
 	}
 	defer unlock()
 
+	// A full commit id never changes meaning. When the mirror already has
+	// the commit there is nothing to fetch, so the check also works
+	// offline. Tags and short ids can move or become ambiguous, so they
+	// always fetch first.
+	if isFullSHA(ref) {
+		if _, err := os.Stat(mirrorDir); err == nil {
+			out, err := git(ctx, "-C", mirrorDir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
+			if err == nil {
+				return mirrorDir, strings.TrimSpace(string(out)), nil
+			}
+		}
+	}
 	if err := update(ctx, gitDir, mirrorDir, repo); err != nil {
 		return "", "", err
 	}
