@@ -8,8 +8,6 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,7 +19,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -31,6 +28,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/DCchoudhury15/reprobot/internal/result"
+	"github.com/DCchoudhury15/reprobot/internal/spec"
 	"github.com/DCchoudhury15/reprobot/internal/store"
 )
 
@@ -150,6 +148,7 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	up.hash = reproducerHash(tmp)
 	project, err := parseProject(up.repro)
 	if err != nil {
 		writeError(w, err)
@@ -208,7 +207,7 @@ type upload struct {
 // reporter files into dir.
 func readUpload(mr *multipart.Reader, dir string) (*upload, error) {
 	up := &upload{}
-	sums := map[string]string{} // file name -> sha256 hex
+	seen := map[string]bool{}
 	haveRepro, haveReporter := false, false
 	nfiles := 0
 	for {
@@ -236,7 +235,6 @@ func readUpload(mr *multipart.Reader, dir string) (*upload, error) {
 				return nil, err
 			}
 			up.repro = data
-			sums[reproFile] = sha256Hex(data)
 		case "file":
 			name, err := rawFileName(part)
 			if err != nil {
@@ -245,17 +243,16 @@ func readUpload(mr *multipart.Reader, dir string) (*upload, error) {
 			if err := checkFileName(name); err != nil {
 				return nil, err
 			}
-			if _, dup := sums[name]; dup {
+			if seen[name] {
 				return nil, badRequest("file %q sent twice", name)
 			}
 			if nfiles++; nfiles > maxFiles {
 				return nil, badRequest("more than %d files", maxFiles)
 			}
-			sum, err := writeFile(filepath.Join(dir, name), part)
-			if err != nil {
+			if err := writeFile(filepath.Join(dir, name), part); err != nil {
 				return nil, err
 			}
-			sums[name] = sum
+			seen[name] = true
 		case "reporter":
 			if haveReporter {
 				return nil, badRequest("more than one reporter field")
@@ -278,7 +275,6 @@ func readUpload(mr *multipart.Reader, dir string) (*upload, error) {
 	if !haveRepro {
 		return nil, badRequest("missing repro field")
 	}
-	up.hash = uploadHash(sums)
 	return up, nil
 }
 
@@ -292,13 +288,12 @@ func wrapRead(err error) error {
 	return badRequest("bad multipart body: %v", err)
 }
 
-func writeFile(path string, r io.Reader) (string, error) {
+func writeFile(path string, r io.Reader) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return "", err
+		return err
 	}
-	h := sha256.New()
-	_, err = io.Copy(io.MultiWriter(f, h), r)
+	_, err = io.Copy(f, r)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -307,11 +302,11 @@ func writeFile(path string, r io.Reader) (string, error) {
 		// from reading the request.
 		var pe *os.PathError
 		if errors.As(err, &pe) {
-			return "", err
+			return err
 		}
-		return "", wrapRead(err)
+		return wrapRead(err)
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return nil
 }
 
 // rawFileName returns the filename parameter as sent. Part.FileName is not
@@ -378,24 +373,23 @@ func (s *Server) checkProject(project string) error {
 	return nil
 }
 
-func sha256Hex(b []byte) string {
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:])
-}
-
-// uploadHash is a sha256 over the sorted file names and the sha256 of each
-// file, so the same upload always gives the same hash.
-func uploadHash(sums map[string]string) string {
-	names := make([]string, 0, len(sums))
-	for n := range sums {
-		names = append(names, n)
+// reproducerHash returns the same hash the runner puts in
+// result.inputs.reproducer_hash, so a report shows one hash before and
+// after it runs. It is empty when repro.yaml is not valid or a listed file
+// is missing; the runner then gives INVALID_INPUT with the reason. Uploaded
+// files that repro.yaml does not list are never mounted, so they are not
+// part of the hash.
+func reproducerHash(dir string) string {
+	path := filepath.Join(dir, reproFile)
+	r, err := spec.LoadReproducer(path)
+	if err != nil {
+		return ""
 	}
-	sort.Strings(names)
-	h := sha256.New()
-	for _, n := range names {
-		fmt.Fprintf(h, "%s\x00%s\n", n, sums[n])
+	h, err := spec.ReproducerHash(path, r)
+	if err != nil {
+		return ""
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	return h
 }
 
 // reportView is what both the JSON endpoint and the page show.

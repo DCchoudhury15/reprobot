@@ -71,7 +71,10 @@ curl -H 'Idempotency-Key: report-42' \
 `GET /v1/reports/{id}` returns the report, its job state, attempts,
 `last_error`, the result once there is one, and `duplicates`: ids of other
 reports in the same project with the same crash signature. Unknown or
-malformed ids give `404`.
+malformed ids give `404`. `repro_hash` is the same value the result later
+shows as `inputs.reproducer_hash`: a hash of `repro.yaml` and the files it
+lists. Uploaded files it does not list are not mounted and not hashed. It is
+missing when `repro.yaml` is not valid; the result then says why.
 
 `GET /reports/{id}` is the same as an HTML page, with no JavaScript.
 

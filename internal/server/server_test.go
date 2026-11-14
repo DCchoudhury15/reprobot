@@ -20,6 +20,7 @@ import (
 
 	"github.com/DCchoudhury15/reprobot/internal/result"
 	"github.com/DCchoudhury15/reprobot/internal/server"
+	"github.com/DCchoudhury15/reprobot/internal/spec"
 	"github.com/DCchoudhury15/reprobot/internal/store"
 	"github.com/DCchoudhury15/reprobot/internal/store/storetest"
 )
@@ -226,7 +227,7 @@ func TestCreateReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rep.Project != "tinyparse" || rep.Reporter != "alice" || rep.JobState != store.JobQueued ||
-		rep.JobID != cr.JobID || rep.ReproHash == "" || !filepath.IsAbs(rep.Dir) {
+		rep.JobID != cr.JobID || !filepath.IsAbs(rep.Dir) {
 		t.Errorf("stored report = %+v", rep)
 	}
 	if same, _ := filepath.Abs(dir); rep.Dir != same {
@@ -245,6 +246,64 @@ func TestCreateReport(t *testing.T) {
 	v := decode[map[string]any](t, out)
 	if v["state"] != "queued" || v["project"] != "tinyparse" || fmt.Sprint(v["duplicates"]) != "[]" {
 		t.Errorf("status = %s", out)
+	}
+}
+
+// fullRepro is valid for spec.LoadReproducer, so it has a reproducer hash.
+const fullRepro = `version: 1
+project: tinyparse
+commit: abc123
+profile: asan
+run:
+  cmd: [bin/tinyparse, poc/input.bin]
+files: [input.bin]
+claim:
+  sanitizer: address
+  kind: heap-buffer-overflow
+`
+
+// The stored hash must be the one the runner writes into
+// result.inputs.reproducer_hash, so a report shows one hash, not two.
+func TestCreateReportReproHashMatchesRunner(t *testing.T) {
+	e := newEnv(t)
+	stored := func(repro string, files []file) (dir, hash string) {
+		t.Helper()
+		body, ctype := form(t, repro, files, nil)
+		code, out := e.post(t, body, ctype, "")
+		if code != http.StatusAccepted {
+			t.Fatalf("status %d: %s", code, out)
+		}
+		rep, err := e.st.GetReport(context.Background(), uuid.MustParse(decode[createResp](t, out).ReportID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.Dir, rep.ReproHash
+	}
+	input := file{name: "input.bin", data: []byte{0x00, 0xff}}
+
+	dir, got := stored(fullRepro, []file{input, {name: "notes.txt", data: []byte("hello")}})
+	path := filepath.Join(dir, "repro.yaml")
+	r, err := spec.LoadReproducer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := spec.ReproducerHash(path, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("stored repro_hash %q, runner hash %q", got, want)
+	}
+	// notes.txt is not listed, never mounted, so it does not change the hash.
+	if _, again := stored(fullRepro, []file{input}); again != want {
+		t.Errorf("without the unlisted file: %q, want %q", again, want)
+	}
+	if _, other := stored(fullRepro, []file{{name: "input.bin", data: []byte{0x01}}}); other == want {
+		t.Error("a different input gave the same hash")
+	}
+	// Not a valid reproducer yet: stored, no hash, the runner reports why.
+	if _, none := stored(goodRepro, nil); none != "" {
+		t.Errorf("incomplete repro.yaml got hash %q, want none", none)
 	}
 }
 
