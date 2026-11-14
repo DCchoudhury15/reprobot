@@ -854,3 +854,34 @@ func TestNewSecret(t *testing.T) {
 		}
 	}
 }
+
+// Exit code 137 without a timeout or the Docker out-of-memory flag gets a
+// note. A confirmed out-of-memory kill, a timeout kill and other exit
+// codes do not.
+func TestRunNotesUnconfirmedKill(t *testing.T) {
+	f := newFake(t)
+	f.outcomes = []sandbox.Outcome{
+		{ExitCode: 137},
+		{ExitCode: 137, OOMKilled: true},
+		{ExitCode: 137, TimedOut: true},
+	}
+	f.reports = nil
+	res := f.run(t)
+	if !strings.Contains(res.Runs[0].Note, "exit code 137") || !strings.Contains(res.Runs[0].Note, "out of memory kill is possible") {
+		t.Errorf("run 0 note = %q, want the unconfirmed kill note", res.Runs[0].Note)
+	}
+	for i := 1; i < 3; i++ {
+		if res.Runs[i].Note != "" {
+			t.Errorf("run %d note = %q, want none", i, res.Runs[i].Note)
+		}
+	}
+
+	f = newFake(t)
+	f.outcomes = []sandbox.Outcome{{ExitCode: 1}, {ExitCode: 0}, {ExitCode: 136}}
+	f.reports = nil
+	for i, r := range f.run(t).Runs {
+		if r.Note != "" {
+			t.Errorf("exit %d: note = %q, want none", f.outcomes[i].ExitCode, r.Note)
+		}
+	}
+}

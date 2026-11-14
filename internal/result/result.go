@@ -48,7 +48,7 @@ type RunOutcome struct {
 	OOMKilled  bool          `json:"oom_killed"`
 	Duration   time.Duration `json:"duration_ns"`
 	Crash      *Crash        `json:"crash,omitempty"`
-	Note       string        `json:"note,omitempty"`   // why a sanitizer log was not counted
+	Note       string        `json:"note,omitempty"`   // why a sanitizer log was not counted, or an unconfirmed kill
 	Report     string        `json:"report,omitempty"` // the counted sanitizer report, from the log file
 	StderrTail string        `json:"stderr_tail,omitempty"`
 }

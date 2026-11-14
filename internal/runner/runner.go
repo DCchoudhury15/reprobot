@@ -519,6 +519,11 @@ func runOnce(ctx context.Context, d deps, cacheDir string, s sandbox.Spec) (resu
 	if err != nil {
 		return result.RunOutcome{}, fmt.Errorf("runner: %w", err)
 	}
+	// Docker can lose the out-of-memory event when the container exits at
+	// the same moment, so say what is known instead of staying silent.
+	if oc.ExitCode == exitKilled && !oc.TimedOut && !oc.OOMKilled {
+		note = joinNotes(note, "exit code 137: the program was killed or exited with 137 itself; an out of memory kill is possible but Docker did not report one")
+	}
 	return result.RunOutcome{
 		ExitCode:   oc.ExitCode,
 		TimedOut:   oc.TimedOut,
@@ -529,6 +534,16 @@ func runOnce(ctx context.Context, d deps, cacheDir string, s sandbox.Spec) (resu
 		Report:     tail(report, ReportTailBytes),
 		StderrTail: tail(oc.Stderr, StderrTailBytes),
 	}, nil
+}
+
+// exitKilled is the exit code of a program ended by SIGKILL (128 + 9).
+const exitKilled = 137
+
+func joinNotes(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a + "; " + b
 }
 
 // newSecret returns a random log dir name and a random sanitizer exit code.

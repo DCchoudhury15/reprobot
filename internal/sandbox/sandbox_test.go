@@ -192,9 +192,22 @@ func TestRunOOM(t *testing.T) {
 	requireDocker(t)
 	t.Parallel()
 	hog := `x=$(head -c 200000000 /dev/zero | tr "\0" a); echo ${#x}`
-	out := run(t, Spec{Cmd: []string{"sh", "-c", hog}, MemoryMB: 64, Timeout: time.Minute})
-	if !out.OOMKilled {
-		t.Fatalf("OOMKilled false: exit %d stdout %q", out.ExitCode, out.Stdout)
+	// Docker sometimes loses the out-of-memory event when the container
+	// exits at the same moment (seen about once in 30 runs under load).
+	// The run must always end with exit code 137, and the flag must be set
+	// in at least one of three tries.
+	for try := 1; ; try++ {
+		out := run(t, Spec{Cmd: []string{"sh", "-c", hog}, MemoryMB: 64, Timeout: time.Minute})
+		if out.ExitCode != 137 || out.TimedOut {
+			t.Fatalf("try %d: exit %d, timed out %v, want a kill with exit code 137", try, out.ExitCode, out.TimedOut)
+		}
+		if out.OOMKilled {
+			return
+		}
+		if try == 3 {
+			t.Fatalf("OOMKilled false in %d tries: exit %d stdout %q", try, out.ExitCode, out.Stdout)
+		}
+		t.Logf("try %d: exit 137 without the OOMKilled flag, trying again", try)
 	}
 }
 

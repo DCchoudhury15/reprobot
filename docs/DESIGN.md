@@ -123,6 +123,33 @@ A crash counts only when a report file exists in the secret subdir and the
 exit code equals the secret one. Log files are opened without following
 symlinks and without blocking on FIFOs, because the run user owns them.
 
+### What this does not cover
+
+The secret log dir and exit code reach the sanitizer through the
+environment, so the program under test can read them too. This is fine for
+programs that only parse the reporter's input (`xmllint`, image decoders,
+most fuzz targets): the input cannot run code, it can only be echoed. It
+does not hold for targets where the input is a program, such as an
+interpreter that can read files or call native code. A script there can
+read the options, write a fake report into the secret dir and exit with
+the secret code.
+
+Hiding the options after start-up was tried (a preloaded library that
+removes them from the environment once the sanitizer has read them):
+
+- it works for ASan, which reads its options before any program code runs;
+- it breaks UBSan, which reads its options at the first report, so the
+  report and exit code are lost;
+- it does not stop a script from reading `/proc/self/mem`, or from calling
+  the sanitizer's own report function through an FFI, which gives a real
+  report with real frames.
+
+Any check that runs inside the same process can be copied by code running
+in that process. So reprobot does not support profiles whose input is code
+with file or native access, and a maintainer should not add one. Checking
+such targets needs a check from outside the process (for example ptrace),
+which is future work.
+
 ## Sandbox
 
 v0 uses Docker. It uses the gVisor runtime (`runsc`) when it is installed and
