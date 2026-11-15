@@ -176,6 +176,8 @@ func (r *Reproducer) validate(v *invalid) {
 		seen[f] = true
 	}
 
+	r.validateServers(v, seen)
+
 	switch r.Claim.Sanitizer {
 	case "address", "undefined":
 		if r.Claim.Kind == "" {
@@ -184,6 +186,56 @@ func (r *Reproducer) validate(v *invalid) {
 	case "none":
 	default:
 		v.add("claim.sanitizer %q must be one of address, undefined, none", r.Claim.Sanitizer)
+	}
+}
+
+func (r *Reproducer) validateServers(v *invalid, files map[string]bool) {
+	if len(r.Run.Servers) > MaxServers {
+		v.add("run.servers: at most %d servers", MaxServers)
+	}
+	ports := map[int]bool{}
+	for i, s := range r.Run.Servers {
+		at := fmt.Sprintf("run.servers[%d]", i)
+		if s.Port < 1 || s.Port > 65535 {
+			v.add("%s.port %d is not a TCP port", at, s.Port)
+		} else if ports[s.Port] {
+			v.add("%s.port %d is used twice", at, s.Port)
+		}
+		ports[s.Port] = true
+		if len(s.Steps) == 0 {
+			v.add("%s.steps is empty", at)
+		}
+		if len(s.Steps) > MaxSteps {
+			v.add("%s: at most %d steps", at, MaxSteps)
+		}
+		for j, st := range s.Steps {
+			sat := fmt.Sprintf("%s.steps[%d]", at, j)
+			set := 0
+			if st.Read != "" {
+				set++
+				if st.Read != "line" && st.Read != "headers" && st.Read != "any" {
+					v.add("%s.read %q must be line, headers or any", sat, st.Read)
+				}
+			}
+			if st.Send != "" {
+				set++
+				if !files[st.Send] {
+					v.add("%s.send %q is not listed in files", sat, st.Send)
+				}
+			}
+			if st.SleepMS != 0 {
+				set++
+				if st.SleepMS < 0 || st.SleepMS > MaxSleepMS {
+					v.add("%s.sleep_ms must be 1 to %d", sat, MaxSleepMS)
+				}
+			}
+			if st.Close {
+				set++
+			}
+			if set != 1 {
+				v.add("%s must set exactly one of read, send, sleep_ms, close", sat)
+			}
+		}
 	}
 }
 

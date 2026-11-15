@@ -18,6 +18,25 @@ type Run struct {
 	Cmd            []string `yaml:"cmd" json:"cmd"`
 	TimeoutSeconds int      `yaml:"timeout_seconds" json:"timeout_seconds"`
 	Repeat         int      `yaml:"repeat" json:"repeat"`
+	// Servers answer the program on loopback, for bugs in network clients.
+	// They are scripted with data only: reprobot's own replay server runs
+	// the steps, so no reporter code runs outside the program under test.
+	Servers []Server `yaml:"servers" json:"servers,omitempty"`
+}
+
+// Server is one loopback TCP server. Every connection runs Steps from the
+// start, then waits for the client to close.
+type Server struct {
+	Port  int    `yaml:"port" json:"port"`
+	Steps []Step `yaml:"steps" json:"steps"`
+}
+
+// Step is one action on a connection. Exactly one field is set.
+type Step struct {
+	Read    string `yaml:"read" json:"read,omitempty"`         // line | headers | any
+	Send    string `yaml:"send" json:"send,omitempty"`         // a file from Reproducer.Files
+	SleepMS int    `yaml:"sleep_ms" json:"sleep_ms,omitempty"` // pause before the next step
+	Close   bool   `yaml:"close" json:"close,omitempty"`       // close the connection
 }
 
 // Claim is what the reporter says will happen.
@@ -59,4 +78,7 @@ const (
 	MaxTimeoutSeconds     = 300
 	DefaultRepeat         = 5
 	MaxRepeat             = 20
+	MaxServers            = 4
+	MaxSteps              = 64
+	MaxSleepMS            = 10000
 )
