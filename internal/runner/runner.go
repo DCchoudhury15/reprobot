@@ -189,6 +189,19 @@ func run(ctx context.Context, o Options, d deps) (*result.Result, error) {
 		return nil, fmt.Errorf("runner: copy reporter files: %w", err)
 	}
 	s := runSpec(project, repro, out.BinDir, pocDir)
+
+	// If the reproducer uses loopback servers, start a helper container
+	// that runs the replay servers. The program container shares its
+	// network namespace (loopback only, no external access).
+	if len(repro.Run.Servers) > 0 {
+		h, err := startHelper(ctx, cacheDir, repro.Run.Servers, pocDir)
+		if err != nil {
+			return nil, fmt.Errorf("runner: %w", err)
+		}
+		defer h.cleanup(ctx)
+		s.NetworkContainer = h.name
+	}
+
 	for range repeat(repro.Run.Repeat) {
 		ro, err := runOnce(ctx, d, cacheDir, s)
 		if err != nil {

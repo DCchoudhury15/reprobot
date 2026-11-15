@@ -39,8 +39,9 @@ type Spec struct {
 	Env          map[string]string
 	WorkDir      string
 	Mounts       []Mount
-	Network      bool // false means no network at all
-	CPUs         float64
+	Network          bool   // false means no network at all
+	NetworkContainer string // share another container's network namespace
+	CPUs             float64
 	MemoryMB     int
 	PidsLimit    int
 	Timeout      time.Duration // zero means no limit other than ctx
@@ -257,7 +258,10 @@ func createArgs(s Spec, name, runtime string) ([]string, error) {
 		"--ulimit=core=0",
 		fmt.Sprintf("--tmpfs=/tmp:rw,nosuid,nodev,size=%dm", tmpfs),
 	}
-	if !s.Network {
+	switch {
+	case s.NetworkContainer != "":
+		args = append(args, "--network=container:"+s.NetworkContainer)
+	case !s.Network:
 		args = append(args, "--network=none")
 	}
 	if s.ReadOnlyRoot {

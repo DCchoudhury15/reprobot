@@ -1,0 +1,12 @@
+# Evaluation cases for curl. Each dir holds a repro.yaml and its files.
+#
+# real: the repro.yaml names the last vulnerable commit. The same report is
+# then run again on the fix commit and must not crash there.
+# false: reports about bugs that do not exist.
+project: project.yaml
+real:
+  - dir: cve-2023-38545
+    id: CVE-2023-38545
+    fix: fb4415d8aee6c1045be932a34fe6107c2f5ed147
+    input: SOCKS5 protocol data derived from upstream test728 and the CVE advisory
+false: []

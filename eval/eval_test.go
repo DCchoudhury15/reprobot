@@ -50,6 +50,7 @@ type falseCase struct {
 }
 
 func TestLibxml2(t *testing.T) { runProject(t, "libxml2") }
+func TestCurl(t *testing.T)    { runProject(t, "curl") }
 
 func runProject(t *testing.T, name string) {
 	dir, err := filepath.Abs(name)
