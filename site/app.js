@@ -598,6 +598,159 @@
   line("reprobot demo shell. Type help, or tap a command below.", "dim");
   seen($(".term"), function () { run("reprobot run --project project.yaml repro.yaml"); }, 0.5);
 
+  /* ===================================================================
+     real CVEs: flip the commit (data from real.js, a recorded eval run)
+     =================================================================== */
+  (function () {
+    var X = window.RB_REAL;
+    if (!X || !$("#flip")) return;
+    var C = X.real, F = X.fakes, LIB = "https://github.com/GNOME/libxml2/commit/";
+    function count(list, at, state) { return list.filter(function (c) { return (at ? c[at] : c).state === state; }).length; }
+    $("#tally").innerHTML = [
+      [count(C, "vuln", "REPRODUCED_AS_CLAIMED") + "/" + C.length, "crash on the vulnerable commit", "var(--melon)"],
+      [count(C, "fix", "NOT_REPRODUCED") + "/" + C.length, "clean on the fix commit", "var(--mint)"],
+      [count(F, null, "NOT_REPRODUCED") + "/" + F.length, "fake reports rejected", "var(--gold)"]
+    ].map(function (t) { return '<div style="--c: ' + t[2] + '"><b>' + t[0] + "</b><span>" + t[1] + "</span></div>"; }).join("");
+
+    var tabs = $("#cveTabs");
+    tabs.innerHTML = C.map(function (c, i) {
+      return '<button type="button" class="cve-tab" role="tab" aria-selected="' + (i === 0) + '" data-i="' + i + '"><code>' + esc(c.id) +
+        "</code><small>" + esc(c.title) + '</small><span class="dots" aria-hidden="true"><i></i><i></i></span></button>';
+    }).join("");
+    var tabEls = $$(".cve-tab", tabs);
+
+    var bot = Robot({ track: true, poke: true });
+    $("#realBot").appendChild(bot.el);
+    var sw = $("#cSwitch"), swBtns = $$("button", sw), lampWrap = $("#cLamps");
+    lampWrap.innerHTML = [1, 2, 3].map(function (n) { return '<span class="lamp"><i></i><span>run ' + n + "</span></span>"; }).join("");
+    var lamps = $$(".lamp", lampWrap);
+    var cur = { i: 0, at: "vuln", token: 0 }, seenRuns = {};
+
+    function twin(c) {
+      for (var k = 0; k < C.length; k++) if (C[k] !== c && C[k].vuln.signature === c.vuln.signature) return C[k];
+      return null;
+    }
+    function setLamps(r, hot, upto) {
+      lamps.forEach(function (l, k) {
+        l.className = "lamp" + (k < upto ? (hot ? " hot" : " cool") : "");
+        $("span", l).textContent = k < upto ? r.runsMs[k] + " ms" : "run " + (k + 1);
+      });
+    }
+    function dots() {
+      tabEls.forEach(function (t, i) {
+        var d = $$(".dots i", t);
+        d[0].className = seenRuns[i + "vuln"] ? "hot" : "";
+        d[1].className = seenRuns[i + "fix"] ? "cool" : "";
+      });
+    }
+    function frame(c) {
+      var r = c.vuln, size = r.size ? " of size " + r.size : "";
+      return '<div class="kind-line"><b>' + esc(r.kind) + "</b><span>" + esc(r.access + size) + "</span></div><ol>" +
+        r.frames.map(function (f, k) {
+          return '<li class="' + (f.fn === c.claim.frame ? "claimed" : "") + '" style="animation-delay:' + (k * 70) + 'ms"><span class="k">' + (k + 1) +
+            '</span><span class="fn">' + esc(f.fn) + "</span><small>" + esc(f.at) + "</small></li>";
+        }).join("") + "</ol>" +
+        (r.line ? '<div class="crash-line"><small>crash line</small><code>' + esc(r.line) + "</code></div>" : "");
+    }
+    async function show(animate) {
+      var token = ++cur.token, c = C[cur.i], at = cur.at, r = c[at], hot = at === "vuln";
+      sw.classList.toggle("at-fix", !hot);
+      swBtns.forEach(function (b) {
+        var which = b.getAttribute("data-at");
+        b.setAttribute("aria-pressed", String(which === at));
+        $("code", b).textContent = c[which].commit.slice(0, 7);
+      });
+      tabEls.forEach(function (t, i) { t.setAttribute("aria-selected", String(i === cur.i)); });
+      $("#cLinks").innerHTML =
+        '<a href="' + LIB + c[at].commit + '" target="_blank" rel="noopener">' + (hot ? "vulnerable" : "fix") + " commit ↗</a>" +
+        '<a href="' + GH + "eval/libxml2/" + c.dir + '/repro.yaml" target="_blank" rel="noopener">the report ↗</a>';
+      var gridEl = $("#cGrid"), print = gridEl.parentNode, old = $(".twin", print);
+      if (old) old.remove();
+
+      if (animate && !reduce) {
+        bot.busy(true).mood("work");
+        $("#cStamp").innerHTML = "";
+        $("#cReason").textContent = "";
+        $("#cCrash").innerHTML = '<div class="wait">$ ' + esc(c.cmd) + "</div>";
+        if (!gridEl.children.length) grid(gridEl, "0000000000000000", false);
+        gridEl.classList.add("off");
+        $("#cHex").textContent = "................";
+        setLamps(r, hot, 0);
+        for (var k = 0; k < 3; k++) {
+          lamps[k].className = "lamp run";
+          await wait(Math.max(320, r.runsMs[k] * 2.6));
+          if (token !== cur.token) return;
+          setLamps(r, hot, k + 1);
+          if (hot) bot.flash("alarm", 300); else bot.flash("happy", 250);
+          bot.hop(hot ? 7 : 4);
+        }
+        await wait(200);
+        if (token !== cur.token) return;
+        bot.busy(false);
+      } else setLamps(r, hot, 3);
+
+      seenRuns[cur.i + at] = true;
+      dots();
+      $("#cStamp").innerHTML = stamp(r.state);
+      $("#cReason").textContent = r.reason + " · commit " + r.commit.slice(0, 7);
+      if (hot) {
+        $("#cCrash").innerHTML = frame(c);
+        gridEl.classList.remove("off");
+        grid(gridEl, r.signature, animate);
+        $("#cHex").textContent = r.signature;
+        var t = twin(c);
+        if (t) print.insertAdjacentHTML("beforeend", '<span class="twin">same print as ' + esc(t.id) +
+          (t.vuln.site && c.vuln.site && t.vuln.site !== c.vuln.site ? ", other line: not a duplicate" : "") + "</span>");
+        bot.mood("alarm");
+        if (animate) burst(lampWrap, 50);
+      } else {
+        $("#cCrash").innerHTML = '<div class="calm"><div><b>No crash</b><br><span>exit ' + esc(r.exit[0]) + " · no sanitizer report</span></div></div>";
+        if (!gridEl.children.length) grid(gridEl, "0000000000000000", false);
+        gridEl.classList.add("off");
+        $("#cHex").textContent = "no crash, no print";
+        bot.mood("happy");
+        if (animate) bot.hop(14);
+      }
+    }
+    tabEls.forEach(function (t, i) {
+      t.addEventListener("click", function () { cur.i = i; cur.at = "vuln"; show(true); });
+      t.addEventListener("keydown", function (e) {
+        var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (!d) return;
+        e.preventDefault();
+        var n = (i + d + C.length) % C.length;
+        tabEls[n].focus();
+        cur.i = n; cur.at = "vuln"; show(true);
+      });
+    });
+    swBtns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        var at = b.getAttribute("data-at");
+        cur.at = at === cur.at ? (at === "vuln" ? "fix" : "vuln") : at;
+        show(true);
+      });
+    });
+    show(false);
+    seen($("#flip"), async function () {
+      var token = cur.token;
+      cur.at = "vuln";
+      await show(true);
+      await wait(1300);
+      if (token + 1 !== cur.token) return; // the visitor took over
+      cur.at = "fix";
+      show(true);
+    }, 0.2);
+
+    $("#fakes").innerHTML = F.map(function (f) {
+      var why = f.findings.length ? f.claim.frame + " is not in the code"
+        : f.stderrHasReport ? "the pasted report reached stderr, not counted"
+        : "3 runs, no sanitizer report";
+      return '<article class="fake"><small>Fake report</small><p>' + esc(f.about.charAt(0).toUpperCase() + f.about.slice(1)) +
+        "</p><code>claims " + esc(f.claim.kind) + " in " + esc(f.claim.frame) + "</code>" + stamp(f.state) +
+        '<span class="why">' + esc(why) + "</span></article>";
+    }).join("");
+  })();
+
   $("#copyBtn").addEventListener("click", function () {
     var b = this;
     if (!navigator.clipboard) return;

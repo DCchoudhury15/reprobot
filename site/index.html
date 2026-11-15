@@ -12,8 +12,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="owl.css?v=22">
-<link rel="stylesheet" href="style.css?v=22">
+<link rel="stylesheet" href="owl.css?v=24">
+<link rel="stylesheet" href="style.css?v=24">
 <script>document.documentElement.classList.add("js");</script>
 </head>
 <body>
@@ -23,6 +23,7 @@
   <div class="wrap">
     <a class="brand" href="#top"><span id="brandBot" class="brand-bot"></span><span>reprobot</span></a>
     <nav aria-label="Main">
+      <a href="#real" style="--c: var(--gold)">Real CVEs</a>
       <a href="#play" style="--c: var(--melon)">Real or fake</a>
       <a href="#slots" style="--c: var(--lilac)">Slots</a>
       <a href="#tricks" style="--c: var(--mint)">Tricks</a>
@@ -49,6 +50,7 @@
         <li style="--c: var(--melon)"><b>3</b> runs per report</li>
         <li style="--c: var(--mint)"><b>0</b> network</li>
         <li style="--c: var(--lilac)"><b id="heroTime">14.0 s</b> for 8 reports</li>
+        <li style="--c: var(--gold)"><a href="#real"><b>5/5</b> real CVEs caught</a></li>
       </ul>
     </div>
     <div class="stage card" id="stage">
@@ -56,6 +58,38 @@
       <div class="status" id="feedStatus" aria-live="polite"><span class="hint">Drag a report onto the owl, or tap one</span></div>
       <div class="feed-cards" id="feedCards"></div>
     </div>
+  </div>
+</section>
+
+<section class="sec" id="real" style="--sec: var(--gold)">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="tag">Real bugs · libxml2</span>
+      <h2>Five CVEs. <span class="c">Flip the fix.</span></h2>
+      <p>Same report, same input. Only the commit changes.</p>
+    </header>
+    <div class="tally reveal" id="tally"></div>
+    <div class="cve-tabs reveal" id="cveTabs" role="tablist" aria-label="CVEs"></div>
+    <div class="cve-card card reveal" id="flip">
+      <div class="flip-side">
+        <div id="realBot" class="real-bot"></div>
+        <div class="switch" id="cSwitch" role="group" aria-label="Commit">
+          <button type="button" data-at="vuln" aria-pressed="true"><small>vulnerable</small><code></code></button>
+          <button type="button" data-at="fix" aria-pressed="false"><small>fixed</small><code></code></button>
+          <span class="knob" aria-hidden="true"></span>
+        </div>
+        <div class="lamps" id="cLamps"></div>
+      </div>
+      <div class="flip-main" aria-live="polite">
+        <div class="flip-top"><span id="cStamp"></span><span class="flip-reason" id="cReason"></span></div>
+        <div class="flip-crash" id="cCrash"></div>
+        <div class="flip-foot">
+          <div class="print"><small>Fingerprint</small><div class="grid" id="cGrid"></div><code id="cHex"></code></div>
+          <div class="flip-links" id="cLinks"></div>
+        </div>
+      </div>
+    </div>
+    <div class="fakes reveal" id="fakes"></div>
   </div>
 </section>
 
@@ -185,9 +219,10 @@
   </div>
 </footer>
 
-<script src="parse.js?v=22"></script>
-<script src="data.js?v=22"></script>
-<script src="robot.js?v=22"></script>
-<script src="app.js?v=22"></script>
+<script src="parse.js?v=24"></script>
+<script src="data.js?v=24"></script>
+<script src="real.js?v=24"></script>
+<script src="robot.js?v=24"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>
