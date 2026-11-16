@@ -4,225 +4,735 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>reprobot</title>
-<meta name="description" content="reprobot checks security reports by running them. It rebuilds the exact commit with sanitizers, runs the proof of concept three times in a sandbox with no network, and tells you what really happened.">
-<meta property="og:title" content="reprobot: is that crash real?">
-<meta property="og:description" content="Rebuilds the exact commit, runs the proof of concept three times in a sealed sandbox, and tells you what really happened.">
-<meta name="theme-color" content="#1b1916">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M5 15L3 1l11 7zM27 15l2-14-11 7z' fill='%23f1e8d8'/%3E%3Cpath d='M16 4l12 7v12l-12 7-12-7V11z' fill='%23f1e8d8'/%3E%3Ccircle cx='11.5' cy='16' r='5.5' fill='%231b1916'/%3E%3Ccircle cx='20.5' cy='16' r='5.5' fill='%231b1916'/%3E%3Ccircle cx='11.5' cy='16' r='3' fill='%235fe0b5'/%3E%3Ccircle cx='20.5' cy='16' r='3' fill='%235fe0b5'/%3E%3Cpath d='M14 21h4l-2 3z' fill='%23f5c451'/%3E%3C/svg%3E">
+<meta name="description" content="reprobot checks security reports by running them. It builds the exact commit with sanitizers, runs the proof of concept three times in a sandbox with no network, and records what really happened.">
+<meta property="og:title" content="reprobot: it runs the bug report. Three times.">
+<meta property="og:description" content="Builds the exact commit, runs the proof of concept three times in a sealed sandbox, and records what really happened.">
+<meta name="theme-color" content="#0a1114">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='18' cy='14' r='11.5' fill='%23efe7d6'/%3E%3Cellipse cx='9.5' cy='19.5' rx='7.5' ry='5.5' fill='%23efe7d6'/%3E%3Ccircle cx='4.5' cy='18.5' r='2.8' fill='%230a1114'/%3E%3Ccircle cx='13' cy='12' r='2.4' fill='%230a1114'/%3E%3Ccircle cx='12.2' cy='11.2' r='.8' fill='%23fff'/%3E%3Ccircle cx='11' cy='17.5' r='1.8' fill='%23e8a79a'/%3E%3Crect x='19' y='7' width='9' height='19' rx='4.5' fill='%23c8a45c'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="owl.css?v=24">
-<link rel="stylesheet" href="style.css?v=24">
-<script>document.documentElement.classList.add("js");</script>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Hanken+Grotesk:wght@400;500;600;700&family=Martian+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a1114; --ivory:#efe7d6; --paper:#e9dfc8; --brass:#c8a45c; --brass2:#8c6f36;
+  --red:#e0563f; --green:#4fb58d; --blue:#6aa3cf; --violet:#a391dd;
+  --muted:#8b9b9d; --dim:#56676a; --line:#1e2c31; --line2:#31454b;
+  --serif:"Instrument Serif",Georgia,serif; --sans:"Hanken Grotesk",system-ui,sans-serif; --mono:"Martian Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;background:var(--bg)}
+body{color:var(--ivory);font-family:var(--sans);font-size:17px;line-height:1.5;overflow-x:hidden;min-height:100vh;-webkit-font-smoothing:antialiased;
+  background:radial-gradient(1100px 700px at 78% 8%,#12262c,transparent 70%),radial-gradient(900px 700px at 0% 70%,#101d24,transparent 70%),var(--bg)}
+#heap{position:fixed;inset:0;width:100%;height:100%;z-index:0}
+a{color:inherit}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+:focus-visible{outline:2px solid var(--brass);outline-offset:3px}
+.wrap{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:0 22px;pointer-events:none}
+.wrap a,.wrap button,.wrap .trio,.wrap .cmd{pointer-events:auto}
+.mono{font:500 11px/1.5 var(--mono);letter-spacing:.02em;color:var(--muted)}
+
+.top{display:flex;align-items:center;justify-content:space-between;padding:18px 0}
+.logo{display:flex;align-items:center;gap:11px;font:400 27px/1 var(--serif);text-decoration:none}
+.logo svg{width:42px;height:auto}
+.btn{display:inline-flex;align-items:center;gap:9px;padding:12px 18px;border-radius:2px;font:700 14px/1 var(--sans);text-decoration:none;border:1px solid var(--line2);background:rgba(10,17,20,.8);transition:transform .12s,background .15s,border-color .15s}
+.btn:hover{border-color:var(--brass);transform:translateY(-2px)}
+.btn.go{background:var(--ivory);border-color:var(--ivory);color:#0a1114}
+.btn.go:hover{background:#fff}
+
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:30px;align-items:center;padding:34px 0 10px;min-height:min(640px,calc(100vh - 220px))}
+h1{font:400 clamp(48px,6.6vw,96px)/.92 var(--serif);letter-spacing:-.02em}
+h1 em,h2 em{font-style:italic;color:var(--brass)}
+h1 em{white-space:nowrap}
+.sub{margin-top:22px;font-size:20px;color:#c3cbc6;max-width:400px}
+.hint{margin-top:26px;display:flex;align-items:center;gap:10px}
+.hint i{width:26px;height:1px;background:var(--brass)}
+
+.bay{display:flex;flex-direction:column;align-items:center}
+.bay > div:first-child{width:100%;display:flex;justify-content:center}
+.trio{display:block;width:min(480px,100%);height:auto;overflow:visible;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.caps3{display:grid;grid-template-columns:repeat(3,1fr);width:min(400px,100%);text-align:center;margin-top:2px;min-height:34px}
+.caps3 span{font:500 10.5px/1.45 var(--mono);color:var(--muted);transition:color .2s}
+.caps3 span b{display:block;font-weight:600;color:var(--c,var(--muted))}
+.verdict{margin-top:10px;text-align:center;min-height:104px}
+.verdict h3{font:italic 400 clamp(34px,4.6vw,58px)/1 var(--serif);color:var(--c,var(--ivory));transition:color .2s}
+.verdict h3.pop{animation:pop .45s cubic-bezier(.2,1.5,.4,1)}
+@keyframes pop{from{transform:scale(.8) translateY(8px);opacity:0}}
+.verdict p{margin-top:10px}
+.verdict p b{color:var(--ivory);font-weight:600}
+.verdict small{display:block;margin-top:4px;font:500 10.5px/1.5 var(--mono);color:var(--brass)}
+
+/* tickets */
+.tix-h{display:flex;justify-content:space-between;align-items:baseline;margin:22px 0 12px}
+.tix{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.tk{position:relative;text-align:left;padding:13px 30px 13px 16px;background:var(--paper);color:#17130b;font:600 14px/1.25 var(--sans);min-height:62px;display:flex;align-items:center;
+  clip-path:polygon(0 0,100% 0,100% 30%,calc(100% - 7px) 50%,100% 70%,100% 100%,0 100%,0 70%,7px 50%,0 30%);transition:transform .16s,background .16s}
+.tk:nth-child(odd){transform:rotate(-.5deg)}.tk:nth-child(even){transform:rotate(.4deg)}
+.tk:hover{transform:translateY(-5px) rotate(-1deg);background:#fff8e6}
+.tk[aria-pressed="true"]{background:var(--brass);transform:translateY(-5px)}
+.tk i{position:absolute;right:16px;top:50%;width:10px;height:10px;margin-top:-5px;border-radius:50%;border:1.5px solid #a3977c}
+.tk.done i{border-color:transparent;background:var(--c)}
+.fly{position:fixed;z-index:9;pointer-events:none;margin:0;transition:transform .5s cubic-bezier(.5,0,.7,.4),opacity .5s}
+
+/* how it works */
+.how{padding:110px 0 0}
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:34px}
+.st{position:relative;padding:22px 20px 24px;border:1px solid var(--line2);border-radius:2px;background:rgba(10,17,20,.84);animation:stp 8s infinite;animation-delay:calc(var(--n)*2s)}
+.st::after{content:"";position:absolute;right:-12px;top:50%;width:9px;height:9px;margin-top:-5px;border-top:2px solid var(--brass);border-right:2px solid var(--brass);transform:rotate(45deg);z-index:1}
+.st:last-child::after{display:none}
+.st em{position:absolute;right:16px;top:10px;font:italic 400 34px/1 var(--serif);color:var(--line2)}
+.st svg{display:block;width:44px;height:44px;fill:none;stroke:var(--brass);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.st b{display:block;margin-top:16px;font:600 19px/1.25 var(--sans)}
+@keyframes stp{0%,4%{border-color:var(--line2);box-shadow:none}8%,24%{border-color:var(--brass);box-shadow:5px 5px 0 rgba(200,164,92,.35)}30%,100%{border-color:var(--line2);box-shadow:none}}
+
+/* acts */
+.act{padding:120px 0 0;display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:30px;align-items:center}
+.act.flip-side{grid-template-columns:minmax(0,6fr) minmax(0,5fr)}
+h2{font:400 clamp(40px,5.4vw,76px)/.95 var(--serif);letter-spacing:-.015em}
+.act .trio{width:min(340px,84%)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+.chip{padding:10px 13px;border:1px solid var(--line2);border-radius:2px;background:rgba(10,17,20,.82);font:500 11px/1.2 var(--mono);color:#c3cbc6;transition:all .15s;text-align:left}
+.chip:hover{border-color:var(--brass);color:var(--ivory);transform:translateY(-2px)}
+.chip[aria-pressed="true"]{background:var(--ivory);border-color:var(--ivory);color:#0a1114}
+.chip.big{font:600 14px/1.2 var(--sans);padding:12px 15px}
+.seg{display:inline-grid;grid-template-columns:1fr 1fr;margin-top:22px;border:1px solid var(--line2);border-radius:2px;background:rgba(10,17,20,.82);position:relative}
+.seg button{position:relative;z-index:1;padding:13px 20px;font:700 14px/1.1 var(--sans);color:var(--muted);transition:color .2s;text-align:center}
+.seg button small{display:block;margin-top:5px;font:500 10px/1 var(--mono);opacity:.8}
+.seg button[aria-pressed="true"]{color:#0a1114}
+.seg::before{content:"";position:absolute;top:3px;bottom:3px;left:3px;width:calc(50% - 3px);background:var(--red);border-radius:1px;transition:transform .3s cubic-bezier(.5,1.4,.5,1),background .3s}
+.seg[data-at="fix"]::before{transform:translateX(100%);background:var(--green)}
+.frame{margin-top:8px;font:500 11.5px/1.6 var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.frame b{color:var(--ivory);font-weight:600}
+.links{margin-top:12px;display:flex;gap:18px;flex-wrap:wrap;justify-content:center}
+.links a,.why a{font:500 11px/1.4 var(--mono);color:var(--brass);text-underline-offset:3px;overflow-wrap:anywhere}
+.score{margin-top:26px;font:italic 400 24px/1.3 var(--serif);color:#c3cbc6}
+.score b{font-weight:400;color:var(--ivory)}
+.fp{display:inline-grid;grid-template-columns:repeat(16,1fr);gap:2px;width:170px;margin-top:14px}
+.fp i{aspect-ratio:1;background:rgba(239,231,214,.1)}
+.fp i.x{background:var(--c,var(--ivory))}
+
+.locks{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:min(430px,100%);margin-top:6px}
+.lock{padding:14px 8px 12px;border:1px solid var(--line2);border-radius:2px;background:rgba(10,17,20,.82);text-align:center;font:500 10px/1.4 var(--mono);color:var(--muted);transition:all .2s}
+.lock svg{display:block;width:34px;height:34px;margin:0 auto 9px;fill:none;stroke:var(--brass);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:stroke .2s}
+.lock.hit{border-color:var(--red);color:var(--ivory);background:rgba(224,86,63,.14);animation:jolt .4s}
+.lock.hit svg{stroke:var(--red)}
+@keyframes jolt{25%{transform:translateX(-5px)}50%{transform:translateX(5px)}75%{transform:translateX(-3px)}}
+.why{margin-top:14px;max-width:430px;text-align:center;font-size:15.5px;color:#c3cbc6;min-height:74px}
+
+.get{padding:130px 0 60px;text-align:left}
+.cmd{display:flex;align-items:center;gap:14px;margin-top:28px;max-width:760px;padding:16px 18px;border:1px solid var(--line2);border-radius:2px;background:rgba(6,11,13,.9);font:500 12.5px/1.5 var(--mono);cursor:pointer;transition:border-color .15s}
+.cmd:hover{border-color:var(--brass)}
+.cmd code{flex:1;overflow-x:auto;white-space:nowrap;font:inherit;color:var(--ivory)}
+.cmd code i{font-style:normal;color:var(--brass)}
+.cmd span{font:700 11px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--brass)}
+.get .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px;align-items:center}
+.foot{border-top:1px solid var(--line);padding:20px 0 36px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+
+/* the bot */
+.dog3d{position:absolute;left:0;top:0;z-index:2;cursor:pointer;touch-action:manipulation;will-change:transform;-webkit-tap-highlight-color:transparent}
+.bay > .spot3d{width:min(480px,100%);aspect-ratio:560/437;display:block}
+.act .bay > .spot3d{width:min(340px,84%)}
+.trio .bark,.trio .sniff,.trio .tongue{opacity:0;transition:opacity .12s}
+.trio .head[data-s="ok"] .tongue{opacity:1}
+.trio .head[data-s="crash"] .bark{opacity:1}
+.trio .head[data-s="run"] .sniff{opacity:.8;animation:snf .45s linear infinite}
+@keyframes snf{from{transform:translateY(0)}to{transform:translateY(-7px);opacity:0}}
+.trio .spot{transition:fill .2s}
+.trio .spot[data-s="run"]{animation:blip .45s infinite alternate}
+@keyframes blip{to{opacity:.35}}
+.trio .hit{cursor:pointer}
+.trio .tag,.trio .pl{transition:fill .25s,stroke .25s}
+
+.rv{opacity:0;transform:translateY(22px);transition:opacity .7s,transform .7s}
+.rv.in{opacity:1;transform:none}
+
+@media (max-width:900px){
+  .hero,.act,.act.flip-side{grid-template-columns:1fr;gap:22px}
+  .hero{padding-top:14px;min-height:0}
+  .act{padding-top:84px}
+  .act.flip-side .bay{order:2}
+  .tix{grid-template-columns:1fr 1fr;gap:9px}
+  .how{padding-top:80px}
+  .steps{grid-template-columns:1fr 1fr;gap:16px}
+  .st:nth-child(2)::after{display:none}
+  .st b{font-size:16px}
+  .trio{width:min(340px,92%)}
+  .tk{font-size:13px;padding:11px 26px 11px 14px}
+  .sub{font-size:18px}
+  .hint{margin-top:16px}
+  .get{padding-top:90px}
+  .cmd{font-size:11px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.rv{opacity:1;transform:none}}
+</style>
 </head>
 <body>
-<canvas id="confetti" aria-hidden="true"></canvas>
+<canvas id="heap" aria-hidden="true"></canvas>
+<div class="wrap">
 
-<header class="nav">
-  <div class="wrap">
-    <a class="brand" href="#top"><span id="brandBot" class="brand-bot"></span><span>reprobot</span></a>
-    <nav aria-label="Main">
-      <a href="#real" style="--c: var(--gold)">Real CVEs</a>
-      <a href="#play" style="--c: var(--melon)">Real or fake</a>
-      <a href="#slots" style="--c: var(--lilac)">Slots</a>
-      <a href="#tricks" style="--c: var(--mint)">Tricks</a>
-      <a href="#lab" style="--c: var(--sky)">Fingerprints</a>
-      <a href="#term" style="--c: var(--gold)">Terminal</a>
-    </nav>
-    <a class="btn btn-dark sm" href="https://github.com/DCchoudhury15/reprobot"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 .2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L8 12.6l-4.8 2.5.9-5.4L.2 5.9l5.4-.8z"/></svg>GitHub</a>
-  </div>
+<header class="top">
+  <a class="logo" href="#top"><span id="logoBot"></span>reprobot</a>
+  <a class="btn" href="https://github.com/DCchoudhury15/reprobot">GitHub</a>
 </header>
 
 <main id="top">
+<section class="hero">
+  <div>
+    <h1>It runs the bug report.<br><em>Three times.</em></h1>
+    <p class="sub">Real crash or made up? The hound sniffs it out.</p>
+    <div class="hint mono"><i></i>Pick a report below. Or tap a spot.</div>
+  </div>
+  <div class="bay">
+    <div id="bot1"></div>
+    <div class="caps3" id="caps"><span></span><span></span><span></span></div>
+    <div class="verdict" id="verdict" aria-live="polite"><h3>Waiting.</h3><p class="mono">three runs, one verdict</p></div>
+  </div>
+</section>
+<div class="tix-h mono"><span>INBOX · 8 REAL RECORDED RUNS</span><span id="count">0 / 8</span></div>
+<div class="tix" id="tix"></div>
 
-<section class="hero" id="feed">
-  <div class="wrap hero-grid">
-    <div class="hero-copy">
-      <span class="tag" style="--sec: var(--gold)">open-source security report checker</span>
-      <h1>Is that crash <span class="hl">real?</span></h1>
-      <p class="lede">reprobot rebuilds the exact commit, runs the proof of concept three times in a sealed sandbox, and tells you what really happened.</p>
-      <div class="cta">
-        <a class="btn btn-gold" href="#play">Play: real or fake?</a>
-        <a class="btn btn-dark" href="https://github.com/DCchoudhury15/reprobot">View on GitHub</a>
-      </div>
-      <ul class="chips">
-        <li style="--c: var(--melon)"><b>3</b> runs per report</li>
-        <li style="--c: var(--mint)"><b>0</b> network</li>
-        <li style="--c: var(--lilac)"><b id="heroTime">14.0 s</b> for 8 reports</li>
-        <li style="--c: var(--gold)"><a href="#real"><b>5/5</b> real CVEs caught</a></li>
-      </ul>
-    </div>
-    <div class="stage card" id="stage">
-      <div class="drop" id="drop"><span class="drop-ring" aria-hidden="true"></span><div id="heroBot" class="hero-bot"></div></div>
-      <div class="status" id="feedStatus" aria-live="polite"><span class="hint">Drag a report onto the owl, or tap one</span></div>
-      <div class="feed-cards" id="feedCards"></div>
-    </div>
+<section class="how rv" id="how">
+  <h2>Anyone can <em>claim</em> a crash.</h2>
+  <div class="steps">
+    <div class="st" style="--n:0"><em>1</em><svg viewBox="0 0 34 34"><path d="M8 4h12l6 6v20H8zM20 4v6h6M12 17h10M12 22h10"/></svg><b>Someone says your code crashes</b></div>
+    <div class="st" style="--n:1"><em>2</em><svg viewBox="0 0 34 34"><path d="M17 4l12 6v14l-12 6-12-6V10zM5 10l12 6 12-6M17 16v14"/></svg><b>reprobot builds that exact version</b></div>
+    <div class="st" style="--n:2"><em>3</em><svg viewBox="0 0 34 34"><path d="M27 17a10 10 0 1 1-3.5-7.6M27 5v6h-6"/><path d="M14 13.5l6 3.5-6 3.5z"/></svg><b>Runs their proof 3 times, sealed off</b></div>
+    <div class="st" style="--n:3"><em>4</em><svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="12"/><path d="M11 17l4 4 8-9"/></svg><b>Tells you if it really crashed</b></div>
   </div>
 </section>
 
-<section class="sec" id="real" style="--sec: var(--gold)">
-  <div class="wrap">
-    <header class="sec-head reveal">
-      <span class="tag">Real bugs · libxml2</span>
-      <h2>Five CVEs. <span class="c">Flip the fix.</span></h2>
-      <p>Same report, same input. Only the commit changes.</p>
-    </header>
-    <div class="tally reveal" id="tally"></div>
-    <div class="cve-tabs reveal" id="cveTabs" role="tablist" aria-label="CVEs"></div>
-    <div class="cve-card card reveal" id="flip">
-      <div class="flip-side">
-        <div id="realBot" class="real-bot"></div>
-        <div class="switch" id="cSwitch" role="group" aria-label="Commit">
-          <button type="button" data-at="vuln" aria-pressed="true"><small>vulnerable</small><code></code></button>
-          <button type="button" data-at="fix" aria-pressed="false"><small>fixed</small><code></code></button>
-          <span class="knob" aria-hidden="true"></span>
-        </div>
-        <div class="lamps" id="cLamps"></div>
-      </div>
-      <div class="flip-main" aria-live="polite">
-        <div class="flip-top"><span id="cStamp"></span><span class="flip-reason" id="cReason"></span></div>
-        <div class="flip-crash" id="cCrash"></div>
-        <div class="flip-foot">
-          <div class="print"><small>Fingerprint</small><div class="grid" id="cGrid"></div><code id="cHex"></code></div>
-          <div class="flip-links" id="cLinks"></div>
-        </div>
-      </div>
-    </div>
-    <div class="fakes reveal" id="fakes"></div>
+<section class="act flip-side" id="real">
+  <div class="rv">
+    <h2>Five real CVEs. <em>Flip the fix.</em></h2>
+    <div class="chips" id="cves"></div>
+    <div class="seg" id="seg" data-at="vuln"><button type="button" data-at="vuln" aria-pressed="true">Before the fix<small></small></button><button type="button" data-at="fix" aria-pressed="false">After the fix<small></small></button></div>
+    <p class="score"><b>5/5</b> caught · <b>5/5</b> gone after the fix · <b>3/3</b> fakes rejected</p>
+  </div>
+  <div class="bay rv">
+    <div id="bot2"></div>
+    <div class="verdict" id="v2" aria-live="polite"></div>
   </div>
 </section>
 
-<section class="sec" id="play" style="--sec: var(--melon)">
-  <div class="wrap">
-    <header class="sec-head reveal">
-      <span class="tag">Game</span>
-      <h2>Real or <span class="c">fake?</span></h2>
-      <p>Eight real reports. Guess whether each one crashes, then watch the owl run it.</p>
-    </header>
-    <div class="game reveal">
-      <article class="report card" id="gCard" aria-live="polite"></article>
-      <aside class="game-side card">
-        <div class="score">
-          <div><small>Score</small><b id="gScore">0</b></div>
-          <div><small>Streak</small><b id="gStreak">0</b></div>
-          <div><small>Round</small><b id="gRound">1/8</b></div>
-        </div>
-        <div id="gBot" class="game-bot"></div>
-        <div class="guess" id="gGuess">
-          <button type="button" class="btn btn-melon" data-g="crash">It crashes</button>
-          <button type="button" class="btn btn-mint" data-g="safe">It doesn't</button>
-        </div>
-        <div class="feedback" id="gFeedback" aria-live="polite"></div>
-      </aside>
+<section class="act" id="cheat">
+  <div class="bay rv">
+    <div id="bot3"></div>
+    <div class="locks" id="locks">
+      <div class="lock"><svg viewBox="0 0 34 34"><path d="M8 30V6h18v24M5 30h24"/><circle cx="21" cy="18" r="1.5"/></svg>project programs<br>only</div>
+      <div class="lock"><svg viewBox="0 0 34 34"><path d="M4 9h9l3 4h14v15H4z"/><path d="M17 18v4M15 22h4"/></svg>secret<br>log folder</div>
+      <div class="lock"><svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="12"/><path d="M17 5v3M17 26v3M5 17h3M26 17h3M17 17l5-6"/></svg>secret<br>exit code</div>
     </div>
+    <div class="why" id="why" aria-live="polite"></div>
+  </div>
+  <div class="rv">
+    <h2>Go on, <em>cheat.</em></h2>
+    <div class="chips" id="tricks"></div>
   </div>
 </section>
 
-<section class="sec" id="slots" style="--sec: var(--lilac)">
-  <div class="wrap">
-    <header class="sec-head reveal">
-      <span class="tag">Verdict machine</span>
-      <h2>Pull the <span class="c">lever.</span></h2>
-      <p>Three runs spin and the owl decides, with the same rules the tool uses. Tap a reel to nudge it.</p>
-    </header>
-    <div class="slot reveal">
-      <div class="cabinet">
-        <div class="lights" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        <div class="reels" id="reels"></div>
-        <div class="screen" id="slotScreen"><b id="slotVerdict"></b><small id="slotReason"></small></div>
-      </div>
-      <div class="lever-col">
-        <button type="button" class="lever" id="lever" aria-label="Pull the lever"><span class="rod"></span><span class="knob"></span></button>
-        <span class="lever-label">pull</span>
-      </div>
-      <div id="slotBot" class="slot-bot"></div>
-    </div>
-  </div>
+<section class="get rv" id="get">
+  <h2>Run it on <em>your inbox.</em></h2>
+  <div class="cmd" id="cmd" role="button" tabindex="0"><code><i>$</i> go install github.com/DCchoudhury15/reprobot/cmd/reprobot@latest</code><span id="cmdS">copy</span></div>
+  <div class="row"><a class="btn go" href="https://github.com/DCchoudhury15/reprobot">Get it on GitHub</a><a class="btn" href="https://github.com/DCchoudhury15/reprobot/blob/main/docs/DESIGN.md">How it works</a><span class="mono">Go 1.26 · git · Docker · Apache 2.0</span></div>
 </section>
-
-<section class="sec" id="tricks" style="--sec: var(--mint)">
-  <div class="wrap">
-    <header class="sec-head reveal">
-      <span class="tag">Gauntlet</span>
-      <h2>Try to <span class="c">fool it.</span></h2>
-      <p>Pick a trick a fake report might use and send it through the six checks.</p>
-    </header>
-    <div class="trick-grid reveal" id="trickGrid"></div>
-    <div class="gauntlet card reveal" id="gauntlet">
-      <div id="guardBot" class="guard-bot"></div>
-      <div class="lane" id="lane">
-        <div class="gates" id="gates"></div>
-        <div class="runner" id="runner"></div>
-        <div class="bubble" id="bubble"></div>
-      </div>
-      <div class="g-result" id="trickResult"><span class="hint">Pick a trick above.</span></div>
-    </div>
-  </div>
-</section>
-
-<section class="sec" id="lab" style="--sec: var(--sky)">
-  <div class="wrap">
-    <header class="sec-head reveal">
-      <span class="tag">Fingerprint lab</span>
-      <h2>Same bug, <span class="c">same print.</span></h2>
-      <p>A crash is named by its kind and its top three functions. Tap a function to rename it and watch the print change.</p>
-    </header>
-    <div class="lab reveal">
-      <div class="card lab-in">
-        <div class="lab-src" id="labSrc"></div>
-        <span class="kind" id="labKind"></span>
-        <div class="frames" id="labFrames"></div>
-        <div class="addr" id="labAddr"></div>
-        <div class="lab-tools">
-          <button type="button" class="btn btn-dark sm" data-act="shuffle">Move addresses</button>
-          <button type="button" class="btn btn-dark sm" data-act="revert">Other commit</button>
-          <button type="button" class="btn btn-dark sm" data-act="other">Different bug</button>
-          <button type="button" class="btn btn-dark sm" data-act="reset">Reset</button>
-        </div>
-      </div>
-      <div class="card lab-out">
-        <div class="prints">
-          <div class="print"><small>This crash</small><div class="grid big" id="fpA"></div><code id="hexA"></code></div>
-          <div class="vs" aria-hidden="true">vs</div>
-          <div class="print"><small>Report 01</small><div class="grid" id="fpB"></div><code id="hexB"></code></div>
-        </div>
-        <div class="match" id="fpMatch"></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="sec" id="term" style="--sec: var(--gold)">
-  <div class="wrap">
-    <header class="sec-head reveal">
-      <span class="tag">Try the CLI</span>
-      <h2>Run it in a <span class="c">terminal.</span></h2>
-      <p>Type a command or tap one below. The output comes from a real recorded run.</p>
-    </header>
-    <div class="term card reveal">
-      <div class="t-bar"><span class="dots"><i></i><i></i><i></i></span><span>~/tinyparse</span></div>
-      <div class="t-out" id="tOut" aria-live="polite"></div>
-      <form class="t-in" id="tForm"><span class="t-ps">$</span><input id="tInput" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Type a command"></form>
-    </div>
-    <div class="t-chips reveal" id="tChips"></div>
-    <div class="install reveal"><span>Install</span><code>go install github.com/DCchoudhury15/reprobot/cmd/reprobot@latest</code><button type="button" class="btn btn-gold sm" id="copyBtn">Copy</button></div>
-  </div>
-</section>
-
 </main>
+<footer class="foot mono"><span>reprobot checks security reports by running them</span><span>the background is a heap. click it.</span></footer>
+</div>
 
-<footer class="foot">
-  <div class="wrap">
-    <div class="foot-brand"><span id="footBot" class="foot-bot"></span><span>reprobot</span></div>
-    <p>Built by <a href="https://divyanshuchoudhury.vercel.app">Divyanshu Choudhury</a> &middot; <a href="https://github.com/DCchoudhury15/reprobot">GitHub</a> &middot; Apache 2.0</p>
-  </div>
-</footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="parse.js?v=40"></script>
+<script src="data.js?v=40"></script>
+<script src="real.js?v=40"></script>
+<script>
+(function () {
+  "use strict";
+  var D = window.RB_DATA, R = window.RB_REAL, RB = window.RB;
+  var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function $(s) { return document.querySelector(s); }
+  function $$(s) { return Array.prototype.slice.call(document.querySelectorAll(s)); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, reduce ? Math.min(ms, 40) : ms); }); }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  var GH = "https://github.com/DCchoudhury15/reprobot/blob/main/";
+  var HUE = ["#c8a45c", "#e0563f", "#4fb58d", "#6aa3cf", "#a391dd"];
+  var INK = ["#5b4a25", "#b93a26", "#2c7d5c", "#2f6a99", "#6a55b5"];
+  var RGB = [[200, 164, 92], [224, 86, 63], [79, 181, 141], [106, 163, 207], [163, 145, 221]];
+  var KIND = { crash: 1, ok: 2, hang: 3, oom: 4, run: 0 };
 
-<script src="parse.js?v=24"></script>
-<script src="data.js?v=24"></script>
-<script src="real.js?v=24"></script>
-<script src="robot.js?v=24"></script>
-<script src="app.js?v=24"></script>
+  /* ================= the heap: interactive background ================= */
+  var BG = (function () {
+    var cv = $("#heap"), ctx = cv.getContext("2d"), base = document.createElement("canvas"), bx = base.getContext("2d");
+    var S = 30, W, H, cols, rows, heat, hue, kind, byteOf, dpr, writes = [], rips = [], live = false, lastAmb = 0;
+    function layout() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = innerWidth; H = innerHeight; cols = Math.ceil(W / S) + 1; rows = Math.ceil(H / S) + 1;
+      cv.width = base.width = W * dpr; cv.height = base.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); bx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var n = cols * rows; heat = new Float32Array(n); hue = new Uint8Array(n); kind = new Uint8Array(n); byteOf = new Uint8Array(n);
+      for (var r = 0; r < rows; r++) {
+        var c = (r * 7) % 5 ? 0 : 1;
+        while (c < cols) {
+          var len = 5 + Math.floor(Math.random() * 13);
+          for (var k = 0; k < len && c < cols; k++, c++) kind[r * cols + c] = 1;
+          for (k = 0; k < 2 && c < cols; k++, c++) kind[r * cols + c] = 2;
+          c += 1 + Math.floor(Math.random() * 3);
+        }
+      }
+      for (var i = 0; i < n; i++) byteOf[i] = Math.floor(Math.random() * 256);
+      bx.clearRect(0, 0, W, H);
+      for (r = 0; r < rows; r++) for (c = 0; c < cols; c++) {
+        var t = kind[r * cols + c];
+        if (!t) continue;
+        bx.fillStyle = t === 1 ? "rgba(239,231,214,.032)" : "rgba(224,86,63,.075)";
+        bx.fillRect(c * S + 3, r * S + 3, S - 6, S - 6);
+      }
+      kick();
+    }
+    function lit(i, h, col) { if (i < 0 || i >= heat.length) return; if (h >= heat[i]) { heat[i] = h; hue[i] = col; } }
+    function frame(ms) {
+      ctx.clearRect(0, 0, W, H);
+      ctx.drawImage(base, 0, 0, W, H);
+      var busy = false, i, w;
+      if (!reduce && ms - lastAmb > 1100 && document.visibilityState === "visible") { lastAmb = ms; ambient(); }
+      for (i = writes.length - 1; i >= 0; i--) {
+        w = writes[i];
+        if (ms < w.next) { busy = true; continue; }
+        w.next = ms + 26;
+        var idx = w.r * cols + w.c, t = w.c < cols ? kind[idx] : 0;
+        if (t === 2) { lit(idx, 1, 1); if (w.c + 1 < cols) lit(idx + 1, 1, 1); if (w.loud) rips.push({ x: w.c * S + S / 2, y: w.r * S + S / 2, r: 0, max: 260, col: 1 }); writes.splice(i, 1); }
+        else if (t === 0 || w.left <= 0) writes.splice(i, 1);
+        else { lit(idx, w.loud ? 1 : .5, 0); w.c++; w.left--; }
+        busy = true;
+      }
+      for (i = rips.length - 1; i >= 0; i--) {
+        var p = rips[i]; p.r += 9;
+        if (p.r > p.max) { rips.splice(i, 1); continue; }
+        var c0 = Math.max(0, Math.floor((p.x - p.r) / S)), c1 = Math.min(cols - 1, Math.ceil((p.x + p.r) / S));
+        var r0 = Math.max(0, Math.floor((p.y - p.r) / S)), r1 = Math.min(rows - 1, Math.ceil((p.y + p.r) / S)), fade = 1 - p.r / p.max;
+        for (var r = r0; r <= r1; r++) for (var c = c0; c <= c1; c++) {
+          if (!kind[r * cols + c]) continue;
+          var dx = c * S + S / 2 - p.x, dy = r * S + S / 2 - p.y, d = Math.sqrt(dx * dx + dy * dy);
+          if (d <= p.r && d > p.r - S * 1.3) lit(r * cols + c, .85 * fade, p.col);
+        }
+        busy = true;
+      }
+      ctx.font = "500 9px 'Martian Mono',monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      for (i = 0; i < heat.length; i++) {
+        var h = heat[i];
+        if (h < .02) continue;
+        var cc = i % cols, rr = (i - cc) / cols, q = RGB[hue[i]];
+        ctx.fillStyle = "rgba(" + q[0] + "," + q[1] + "," + q[2] + "," + (h * .5).toFixed(3) + ")";
+        ctx.fillRect(cc * S + 3, rr * S + 3, S - 6, S - 6);
+        if (h > .45) { ctx.fillStyle = "rgba(10,17,20," + Math.min(1, h * 1.1).toFixed(2) + ")"; ctx.fillText((byteOf[i] < 16 ? "0" : "") + byteOf[i].toString(16), cc * S + S / 2, rr * S + S / 2 + .5); }
+        heat[i] = h * .955; busy = true;
+      }
+      live = busy || !reduce;
+      if (live) requestAnimationFrame(frame);
+    }
+    function kick() { if (!live) { live = true; requestAnimationFrame(frame); } }
+    function startOf(r, c) { while (c > 0 && kind[r * cols + c - 1] === 1) c--; return c; }
+    function ambient() {
+      var r = Math.floor(Math.random() * rows), c = Math.floor(Math.random() * cols);
+      if (kind[r * cols + c] !== 1) return;
+      c = startOf(r, c);
+      var len = 0; while (c + len < cols && kind[r * cols + c + len] === 1) len++;
+      writes.push({ r: r, c: c, left: Math.max(2, len - 1 - Math.floor(Math.random() * 3)), next: 0, loud: false });
+    }
+    addEventListener("pointermove", function (e) {
+      var c = Math.floor(e.clientX / S), r = Math.floor(e.clientY / S), i = r * cols + c;
+      if (c < 0 || r < 0 || c >= cols || r >= rows || !kind[i]) return;
+      byteOf[i] = (byteOf[i] + 17) & 255;
+      lit(i, 1, kind[i] === 2 ? 1 : 0); kick();
+    }, { passive: true });
+    addEventListener("pointerdown", function (e) {
+      if (e.target.closest && e.target.closest("a,button,.trio,.cmd,.dog3d")) return;
+      var c = Math.floor(e.clientX / S), r = Math.floor(e.clientY / S), i = r * cols + c;
+      if (c < 0 || r < 0 || c >= cols || r >= rows) return;
+      if (kind[i] === 2) { lit(i, 1, 1); rips.push({ x: e.clientX, y: e.clientY, r: 0, max: 260, col: 1 }); }
+      else if (kind[i] === 1) writes.push({ r: r, c: c, left: 64, next: 0, loud: true });
+      else rips.push({ x: e.clientX, y: e.clientY, r: 0, max: 120, col: 0 });
+      kick();
+    }, { passive: true });
+    var rt; addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(layout, 150); });
+    layout();
+    return { ripple: function (x, y, col, max) { rips.push({ x: x, y: y, r: 0, max: max || 520, col: col }); kick(); } };
+  })();
+
+  /* ================= the bot: a hound on the scent. three spots = three runs ================= */
+  var ST = {
+    idle:  { c: "#e9dfc6", lift: 6, eye: 1,    ear: 0,   amp: 8,  spd: 3,  base: 0 },
+    run:   { c: "#d9a441", lift: -14,  eye: 1,    ear: 4,   amp: 5,  spd: 14, base: 6 },
+    crash: { c: "#e0563f", lift: 20, eye: 1.15, ear: -32, amp: 3,  spd: 30, base: -14 },
+    ok:    { c: "#4fb58d", lift: 10, eye: .5,   ear: 0,   amp: 22, spd: 11, base: 0 },
+    hang:  { c: "#6aa3cf", lift: -4,  eye: .5,   ear: 6,   amp: 3,  spd: 2,  base: 30 },
+    oom:   { c: "#a391dd", lift: 2, eye: .7,   ear: -12, amp: 6,  spd: 6,  base: 10 },
+    shut:  { c: "#e9dfc6", lift: 12, eye: .12,  ear: 8,   amp: 0,  spd: 1,  base: 64 },
+    bored: { c: "#e9dfc6", lift: 4, eye: .45,  ear: 4,   amp: 4,  spd: 2,  base: 34 }
+  };
+  var SPOTS = [174, 200, 226], OFF = "#d6cab0";
+  var bots = [], uid = 0, ptr = { x: -1, y: -1, t: -10 };
+  function Flat(host, opts) {
+    opts = opts || {};
+    var vb = opts.mini ? [20, 84, 136, 136] : [-8, 56, 310, 228], svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", vb.join(" ")); svg.setAttribute("class", "trio"); svg.setAttribute("aria-hidden", "true");
+    var h = "";
+    if (!opts.mini) {
+      h += '<path d="M2 270H298" stroke="#31454b" stroke-width="3" stroke-dasharray="3 9" stroke-linecap="round"/>' +
+        '<g class="paper" transform="rotate(-12 34 250)"><rect x="12" y="232" width="44" height="34" rx="3" fill="#efe7d6"/><path class="pl" d="M20 243h28M20 252h18" fill="none" stroke="#a3977c" stroke-width="3.5" stroke-linecap="round"/></g>' +
+        '<ellipse cx="186" cy="270" rx="84" ry="5" fill="#000" opacity=".3"/><g class="all">' +
+        '<g class="tail"><path d="M246 168Q278 152 266 114" fill="none" stroke="#efe7d6" stroke-width="14" stroke-linecap="round"/></g>' +
+        '<rect x="132" y="210" width="22" height="58" rx="11" fill="#c8a45c"/><rect x="224" y="210" width="22" height="58" rx="11" fill="#c8a45c"/>' +
+        '<rect x="116" y="148" width="140" height="80" rx="40" fill="#efe7d6"/>' +
+        '<rect x="152" y="212" width="23" height="56" rx="11.5" fill="#efe7d6"/><rect x="204" y="212" width="23" height="56" rx="11.5" fill="#efe7d6"/>';
+      SPOTS.forEach(function (x, i) { h += '<circle class="spot" data-i="' + i + '" cx="' + x + '" cy="186" r="11" fill="' + OFF + '" stroke="#b7a983" stroke-width="2"/><circle class="hit" data-i="' + i + '" cx="' + x + '" cy="186" r="15" fill="transparent"/>'; });
+    }
+    h += '<g class="head" data-s="idle">' +
+      '<rect x="124" y="150" width="14" height="42" rx="4" fill="#8c6f36" transform="rotate(18 131 170)"/><circle class="tag" cx="126" cy="198" r="6.5" fill="#e9dfc6" stroke="#8c6f36" stroke-width="2"/>' +
+      '<circle cx="96" cy="150" r="54" fill="#efe7d6"/>' +
+      '<rect x="32" y="158" width="68" height="44" rx="22" fill="#efe7d6" transform="rotate(-16 70 180)"/>' +
+      '<rect class="tongue" x="54" y="196" width="15" height="20" rx="7.5" fill="#e98b86" transform="rotate(-10 61 200)"/>' +
+      '<path d="M48 200q9 8 22 1" fill="none" stroke="#0a1114" stroke-width="3" stroke-linecap="round"/>' +
+      '<circle class="nose" cx="40" cy="186" r="10" fill="#0a1114"/><circle cx="37" cy="182" r="3" fill="#fff" opacity=".5"/>' +
+      '<circle cx="68" cy="170" r="9" fill="#e8a79a" opacity=".75"/>' +
+      '<g class="eyeb"><circle cx="78" cy="140" r="10.5" fill="#0a1114"/><circle cx="74.5" cy="136" r="3.8" fill="#fff"/><circle cx="82" cy="144" r="1.8" fill="#fff" opacity=".7"/></g>' +
+      '<g class="ear"><rect x="100" y="116" width="42" height="88" rx="21" fill="#c8a45c"/><rect x="108" y="150" width="26" height="46" rx="13" fill="#b08d47" opacity=".5"/></g>' +
+      '<path class="bark" d="M24 168L8 158M20 184L0 184M24 200L8 210" fill="none" stroke="#e0563f" stroke-width="4.5" stroke-linecap="round"/>' +
+      '<path class="sniff" d="M34 204q-7 7 0 14M22 202q-7 7 0 14" fill="none" stroke="#efe7d6" stroke-width="3" stroke-linecap="round"/>' +
+      "</g>" + (opts.mini ? "" : "</g>");
+    svg.innerHTML = h;
+    host.appendChild(svg);
+    var all = svg.querySelector(".all"), head = svg.querySelector(".head"), tail = svg.querySelector(".tail"), ear = svg.querySelector(".ear"), eyeb = svg.querySelector(".eyeb"),
+      nose = svg.querySelector(".nose"), tag = svg.querySelector(".tag"), pl = svg.querySelector(".pl");
+    var f = { s: "idle", lift: 15, eye: 1, ear: 0, amp: 8, spd: 3, base: 0, ph: 0, ex: 0, ey: 0 };
+    var eyes = Array.prototype.slice.call(svg.querySelectorAll(".spot")).map(function (p) { return { el: p, s: "idle" }; });
+    function xy(px, py) { var b = svg.getBoundingClientRect(), k = b.width / vb[2]; return { x: b.left + (px - vb[0]) * k, y: b.top + (py - vb[1]) * k }; }
+    var bot = {
+      el: svg, eyes: eyes, vis: true, mini: !!opts.mini, blinkAt: 2 + Math.random() * 3, bump: 0,
+      face: function (s) {
+        if (!ST[s]) return bot;
+        f.s = s; head.setAttribute("data-s", s); tag.setAttribute("fill", ST[s].c);
+        if (pl) pl.setAttribute("stroke", s === "idle" || s === "shut" || s === "bored" ? "#a3977c" : ST[s].c);
+        if (s === "crash") bot.bump = 1;
+        return bot;
+      },
+      set: function (i, s, quiet) {
+        var a = eyes[i]; if (!ST[s]) return bot;
+        if (a) {
+          var lit = s !== "idle" && s !== "shut" && s !== "bored";
+          a.s = s; a.el.setAttribute("data-s", s); a.el.setAttribute("fill", lit ? ST[s].c : OFF); a.el.setAttribute("stroke", lit ? "#0a1114" : "#b7a983");
+        }
+        if (!quiet) bot.face(s);
+        return bot;
+      },
+      all: function (s) { eyes.forEach(function (a, i) { bot.set(i, s, true); }); return bot.face(s); },
+      eyeXY: function (i) { return xy(SPOTS[i], 186); },
+      slotXY: function () { return xy(34, 250); },
+      step: function (dt, t) {
+        if (bot.mini) { head.setAttribute("transform", "rotate(4 128 172)"); return; }
+        var m = ST[f.s], r = Math.min(1, dt * 9), c = xy(96, 150), fresh = t - ptr.t < 4 && ptr.x >= 0;
+        var blink = t > bot.blinkAt && t < bot.blinkAt + .14;
+        if (t > bot.blinkAt + .14) bot.blinkAt = t + 2.5 + Math.random() * 4;
+        f.lift += (m.lift - f.lift) * r; f.ear += (m.ear - f.ear) * r; f.amp += (m.amp - f.amp) * r; f.spd += (m.spd - f.spd) * r; f.base += (m.base - f.base) * r;
+        f.eye += ((blink ? .1 : m.eye) - f.eye) * Math.min(1, dt * 22);
+        f.ph += dt * f.spd; bot.bump *= Math.pow(.03, dt);
+        var run = f.s === "run", sn = reduce ? 0 : run ? Math.sin(t * 16) * 3 : Math.sin(t * 1.4) * 1.5;
+        var look = fresh && !run ? clamp((c.y - ptr.y) / 300, -1, 1) * 6 : 0;
+        var tx = fresh ? clamp((ptr.x - c.x) / 200, -1, 1) * 2.5 : 0, ty = fresh ? clamp((ptr.y - c.y) / 200, -1, 1) * 2 : 0;
+        f.ex += (tx - f.ex) * Math.min(1, dt * 10); f.ey += (ty - f.ey) * Math.min(1, dt * 10);
+        all.setAttribute("transform", "translate(0 " + (-Math.abs(Math.sin(t * 14)) * bot.bump * 12).toFixed(2) + ")");
+        head.setAttribute("transform", "rotate(" + (f.lift + sn + look).toFixed(2) + " 128 172)");
+        ear.setAttribute("transform", "rotate(" + (8 + f.ear + (run ? Math.sin(t * 16 + 1) * 3 : 0)).toFixed(2) + " 121 124)");
+        tail.setAttribute("transform", "rotate(" + (f.base + (reduce ? 0 : Math.sin(f.ph) * f.amp)).toFixed(2) + " 246 168)");
+        eyeb.setAttribute("transform", "translate(" + f.ex.toFixed(2) + " " + f.ey.toFixed(2) + ") translate(78 140) scale(1 " + f.eye.toFixed(3) + ") translate(-78 -140)");
+        nose.setAttribute("r", (10 + (run && !reduce ? Math.sin(t * 30) * 1.2 : 0)).toFixed(2));
+      }
+    };
+    if (opts.onEye) svg.addEventListener("click", function (ev) { var p = ev.target.closest(".hit"); opts.onEye(p ? +p.getAttribute("data-i") : -1); });
+    if (typeof IntersectionObserver === "function") new IntersectionObserver(function (es) { bot.vis = es[es.length - 1].isIntersecting; }, { rootMargin: "60px" }).observe(svg);
+    bots.push(bot);
+    return bot;
+  }
+  /* ================= the 3D hound: one dog, runs between sections as you scroll ================= */
+  var DOG = (function () {
+    if (!window.THREE) return null;
+    var T = window.THREE, W = 560, H = 437, cv = document.createElement("canvas"), rn;
+    try { rn = new T.WebGLRenderer({ canvas: cv, alpha: true, antialias: true }); } catch (e) { return null; }
+    rn.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); rn.setSize(W, H, false);
+    cv.className = "dog3d"; document.body.appendChild(cv);
+    var scene = new T.Scene(), cam = new T.PerspectiveCamera(28, W / H, .1, 100);
+    cam.position.set(0, 2.9, 10.6); cam.lookAt(0, 1.15, 0);
+    scene.add(new T.HemisphereLight(0xfff6e0, 0x2a4048, 1));
+    var sun = new T.DirectionalLight(0xffffff, .7); sun.position.set(3, 6, 6); scene.add(sun);
+    function mat(c, o) { var m = new T.MeshStandardMaterial({ color: c, roughness: .6, metalness: .05 }); if (o) for (var k in o) m[k] = o[k]; return m; }
+    var IV = mat(0xefe7d6), BR = mat(0xc8a45c, { metalness: .3, roughness: .45 }), BK = mat(0x0a1114, { roughness: .25 }), PK = mat(0xe98b86), RD = mat(0xe0563f), WH = new T.MeshBasicMaterial({ color: 0xffffff });
+    var dog = new T.Group(); scene.add(dog);
+    function ball(r, m, x, y, z, sx, sy, sz, parent) { var g = new T.Mesh(new T.SphereGeometry(r, 30, 22), m); g.position.set(x, y, z); g.scale.set(sx || 1, sy || 1, sz || 1); (parent || dog).add(g); return g; }
+    ball(1, IV, 0, 1.2, 0, 1.3, .88, .9);
+    var legs = [[.72, .46], [.72, -.46], [-.72, .46], [-.72, -.46]].map(function (p) {
+      var g = new T.Group(); g.position.set(p[0], .95, p[1]); dog.add(g);
+      var c = new T.Mesh(new T.CylinderGeometry(.21, .2, .72, 18), IV); c.position.y = -.4; g.add(c);
+      ball(.25, BR, .06, -.8, 0, 1.2, .7, 1, g);
+      return g;
+    });
+    var tail = new T.Group(); tail.position.set(-1.12, 1.5, 0); dog.add(tail);
+    var tc = new T.Mesh(new T.CylinderGeometry(.07, .15, .95, 14), IV); tc.position.y = .45; tail.add(tc); ball(.075, IV, 0, .93, 0, 1, 1, 1, tail);
+    var cg = new T.Group(); cg.position.set(.8, 1.52, 0); cg.rotation.z = .75; dog.add(cg);
+    var collar = new T.Mesh(new T.TorusGeometry(.52, .09, 12, 30), mat(0x8c6f36)); collar.rotation.y = Math.PI / 2; cg.add(collar);
+    var tagM = mat(0xe9dfc6), tag = ball(.12, tagM, 1.12, 1.02, 0);
+    var head = new T.Group(); head.position.set(.85, 1.6, 0); dog.add(head);
+    ball(.8, IV, .35, .35, 0, 1, .95, .95, head);
+    ball(.42, IV, 1.02, .1, 0, 1.15, .82, .95, head);
+    var nose = ball(.15, BK, 1.5, .18, 0, 1, 1, 1, head);
+    var eyes = [1, -1].map(function (s) { var e = ball(.14, BK, .98, .54, s * .46, .8, 1, 1, head); ball(.045, WH, .1, .07, s * .03, 1, 1, 1, e); return e; });
+    [1, -1].forEach(function (s) { ball(.17, mat(0xe8a79a), .86, .17, s * .62, .9, .75, .45, head); });
+    var ears = [1, -1].map(function (s) { var g = new T.Group(); g.position.set(.22, .8, s * .66); head.add(g); ball(.32, BR, 0, -.5, s * .12, .6, 1.5, .7, g); return g; });
+    var tongue = ball(.13, PK, 1.12, -.26, 0, 1, .45, .9, head);
+    var bark = new T.Group(); bark.position.set(1.95, .25, 0); head.add(bark);
+    [-.5, 0, .5].forEach(function (a) { var b = new T.Mesh(new T.BoxGeometry(.42, .08, .08), RD); b.rotation.z = a; b.position.set(Math.cos(a) * .1, Math.sin(a) * .5, 0); bark.add(b); });
+    var spotM = [0, 1, 2].map(function () { return mat(0xd6cab0, { roughness: .4 }); }), spotX = [.48, 0, -.48], spots = { "1": [], "-1": [] }, hits = [];
+    [1, -1].forEach(function (s) { spotX.forEach(function (x, i) {
+      var z = .9 * Math.sqrt(1 - (x / 1.3) * (x / 1.3)) + .005;
+      var d = new T.Mesh(new T.CylinderGeometry(.2, .2, .06, 26), spotM[i]); d.rotation.x = Math.PI / 2; d.position.set(x, 1.24, s * z); dog.add(d); spots[s].push(d);
+      var hm = new T.Mesh(new T.SphereGeometry(.3, 8, 8), new T.MeshBasicMaterial({ visible: false })); hm.position.copy(d.position); hm.userData.i = i; dog.add(hm); hits.push(hm);
+    }); });
+    var shadow = new T.Mesh(new T.CircleGeometry(1.5, 36), new T.MeshBasicMaterial({ color: 0, transparent: true, opacity: .32 })); shadow.rotation.x = -Math.PI / 2; shadow.position.y = .01; shadow.scale.set(1.15, .8, 1); scene.add(shadow);
+    var paper = new T.Group(); scene.add(paper);
+    var pm = new T.Mesh(new T.BoxGeometry(.9, .04, .66), IV); paper.add(pm);
+    var lineM = mat(0xa3977c); [[-.08, -.1, .6], [-.2, .1, .36]].forEach(function (l) { var b = new T.Mesh(new T.BoxGeometry(l[2], .02, .07), lineM); b.position.set(l[0], .03, l[1]); paper.add(b); });
+    paper.position.set(-2.5, .03, 1.3); paper.rotation.y = .35;
+
+    var V = [], active = null, cur = { x: null, y: 0, w: 480 }, yaw = 3.75, ph = 0, bump = 0, tprev = 0, blinkAt = 3, moving = 0, side = -1;
+    var f = { lift: 6, eye: 1, ear: 0, amp: 8, spd: 3, base: 0, tph: 0 }, RAD = Math.PI / 180;
+    function center(el) { var b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; }
+    function proj(o) { var p = o.getWorldPosition(new T.Vector3()).project(cam), b = cv.getBoundingClientRect(); return { x: b.left + (p.x + 1) / 2 * b.width, y: b.top + (1 - p.y) / 2 * b.height }; }
+    function virt(host, opts) {
+      host.classList.add("spot3d");
+      var v = { host: host, el: host, side: host.id === "bot3" ? 1 : -1, s: "idle", eyes: [{ s: "idle" }, { s: "idle" }, { s: "idle" }], onEye: opts.onEye };
+      v.face = function (s) { if (ST[s]) { v.s = s; if (s === "crash" && active === v) bump = 1; } return v; };
+      v.set = function (i, s, q) { if (ST[s]) { v.eyes[i].s = s; if (!q) v.face(s); } return v; };
+      v.all = function (s) { for (var i = 0; i < 3; i++) v.set(i, s, true); return v.face(s); };
+      v.eyeXY = function (i) { return active === v ? proj(spots[side][side < 0 ? i : 2 - i]) : center(host); };
+      v.slotXY = function () { return active === v ? proj(paper) : center(host); };
+      Object.defineProperty(v, "bump", { get: function () { return bump; }, set: function (x) { if (active === v) bump = x; } });
+      V.push(v); return v;
+    }
+    var ray = new T.Raycaster(), m2 = new T.Vector2();
+    cv.addEventListener("click", function (e) {
+      if (!active || !active.onEye) return;
+      var b = cv.getBoundingClientRect(); m2.set((e.clientX - b.left) / b.width * 2 - 1, -((e.clientY - b.top) / b.height * 2 - 1));
+      ray.setFromCamera(m2, cam);
+      var h = ray.intersectObjects(hits), i = h.length ? h[0].object.userData.i : -1;
+      active.onEye(i < 0 ? -1 : side < 0 ? i : 2 - i);
+    });
+    function frame(ms) {
+      requestAnimationFrame(frame);
+      var t = ms / 1000, dt = Math.min(.05, (t - tprev) || .016); tprev = t;
+      var best = null, bd = 1e9, mid = innerHeight / 2;
+      V.forEach(function (v) { var b = v.host.getBoundingClientRect(); v.box = b; var d = Math.abs(b.top + b.height / 2 - mid); if (d < bd) { bd = d; best = v; } });
+      if (!best) return; active = best;
+      var b = best.box, tx = b.left + b.width / 2 + scrollX, ty = b.top + b.height / 2 + scrollY;
+      if (cur.x === null) { cur.x = tx; cur.y = ty; cur.w = b.width; }
+      var k = reduce ? 1 : Math.min(1, dt * 2.6), dx = tx - cur.x, dy = ty - cur.y, dist = Math.sqrt(dx * dx + dy * dy);
+      cur.x += dx * k; cur.y += dy * k; cur.w += (b.width - cur.w) * k;
+      moving += ((dist > 8 ? Math.min(1, dist / 140) : 0) - moving) * Math.min(1, dt * 8);
+      var hgt = cur.w * H / W;
+      cv.style.width = cur.w.toFixed(1) + "px"; cv.style.height = hgt.toFixed(1) + "px";
+      cv.style.transform = "translate(" + (cur.x - cur.w / 2).toFixed(1) + "px," + (cur.y - hgt / 2).toFixed(1) + "px)";
+      var run = moving > .12;
+      side = run && Math.abs(dx) > 40 ? (dx > 0 ? 1 : -1) : best.side;
+      var yt = side < 0 ? 3.75 : 5.67;
+      if (run) yt += (side < 0 ? 1 : -1) * (dy > 0 ? .55 : -.4);
+      yaw += (yt - yaw) * Math.min(1, dt * 6);
+      dog.rotation.y = yaw;
+      paper.position.x += (side * 2.5 - paper.position.x) * Math.min(1, dt * 8); paper.rotation.y = -side * .35;
+      paper.visible = moving < .25;
+      var m = ST[run ? "idle" : best.s], r = Math.min(1, dt * 9), sniff = !run && best.s === "run";
+      var blink = t > blinkAt && t < blinkAt + .14; if (t > blinkAt + .14) blinkAt = t + 2.5 + Math.random() * 4;
+      f.lift += ((run ? 10 : m.lift) - f.lift) * r; f.ear += (m.ear - f.ear) * r; f.amp += ((run ? 14 : m.amp) - f.amp) * r; f.spd += ((run ? 16 : m.spd) - f.spd) * r; f.base += ((run ? -6 : m.base) - f.base) * r;
+      f.eye += ((blink ? .1 : m.eye) - f.eye) * Math.min(1, dt * 22); f.tph += dt * f.spd;
+      ph += dt * (4 + moving * 12); bump *= Math.pow(.03, dt);
+      var sw = reduce ? 0 : Math.sin(ph) * .95 * moving;
+      legs[0].rotation.z = sw; legs[3].rotation.z = sw; legs[1].rotation.z = -sw; legs[2].rotation.z = -sw;
+      var hop = Math.abs(Math.sin(ph)) * .16 * moving + Math.abs(Math.sin(t * 14)) * bump * .5;
+      dog.position.y = hop; dog.rotation.z = Math.sin(ph) * .05 * moving;
+      shadow.scale.set(1.15 - hop * .4, .8 - hop * .3, 1);
+      var sn = reduce ? 0 : sniff ? Math.sin(t * 16) * 3 : Math.sin(t * 1.4) * 1.5;
+      head.rotation.z = (f.lift * 1.1 + sn) * RAD;
+      var fresh = t - ptr.t < 4 && ptr.x >= 0, lookX = fresh ? clamp((ptr.x - (cur.x - scrollX)) / 500, -1, 1) : 0;
+      head.rotation.y = (side < 0 ? 1 : -1) * (sniff ? .1 : .42) + lookX * .25 * (run ? 0 : 1);
+      eyes[0].scale.y = eyes[1].scale.y = f.eye;
+      var flap = Math.sin(ph * 1) * .5 * moving + (sniff ? Math.sin(t * 16 + 1) * .08 : 0);
+      ears[0].rotation.x = f.ear * RAD - Math.abs(flap); ears[1].rotation.x = -f.ear * RAD + Math.abs(flap);
+      tail.rotation.z = (28 + f.base * 1.2) * RAD; tail.rotation.x = reduce ? 0 : Math.sin(f.tph) * f.amp * 2.2 * RAD;
+      nose.scale.setScalar(1 + (sniff && !reduce ? Math.sin(t * 30) * .1 : 0));
+      tongue.visible = !run && best.s === "ok"; bark.visible = !run && best.s === "crash";
+      var fc = ST[best.s].c; tagM.color.set(fc); lineM.color.set(best.s === "idle" || best.s === "shut" || best.s === "bored" ? "#a3977c" : fc);
+      for (var i = 0; i < 3; i++) {
+        var s = best.eyes[i].s, lit = s !== "idle" && s !== "shut" && s !== "bored", mm = spotM[i];
+        mm.color.set(lit ? ST[s].c : "#d6cab0"); mm.emissive.set(lit ? ST[s].c : "#000000");
+        mm.emissiveIntensity = lit ? (s === "run" ? .2 + Math.abs(Math.sin(t * 7)) * .5 : .35) : 0;
+      }
+      rn.render(scene, cam);
+    }
+    requestAnimationFrame(frame);
+    return { virt: virt };
+  })();
+  function Trio(host, opts) { opts = opts || {}; return opts.mini || !DOG ? Flat(host, opts) : DOG.virt(host, opts); }
+  var last = 0;
+  requestAnimationFrame(function tick(ms) {
+    var dt = last ? Math.min(.05, (ms - last) / 1000) : .016; last = ms;
+    for (var i = 0; i < bots.length; i++) if (bots[i].vis) bots[i].step(dt, ms / 1000);
+    requestAnimationFrame(tick);
+  });
+  addEventListener("pointermove", function (e) { ptr.x = e.clientX; ptr.y = e.clientY; ptr.t = performance.now() / 1000; }, { passive: true });
+
+  /* ================= verdict wording ================= */
+  var SAY = { REPRODUCED_AS_CLAIMED: ["Real crash.", 1], REPRODUCED_DIFFERENT: ["Crashes, but not as claimed.", 4], NOT_REPRODUCED: ["No crash.", 2], FLAKY: ["Crashes sometimes.", 0],
+    TIMEOUT: ["Ran out of time.", 3], OOM: ["Ran out of memory.", 4], INVALID_INPUT: ["Refused at the door.", 0], OUT_OF_SCOPE: ["Not a crash claim.", 0], BUILD_FAILED: ["Build failed.", 0] };
+  function verdictHTML(state, reason, extra) {
+    var s = SAY[state];
+    return '<h3 class="pop" style="--c:' + HUE[s[1]] + '">' + s[0] + '</h3><p class="mono">' + esc(reason) + "</p>" + (extra ? "<small>" + extra + "</small>" : "");
+  }
+  function fp(hex, col) {
+    var h = "";
+    for (var i = 0; i < 16; i++) { var n = parseInt(hex[i], 16); for (var b = 3; b >= 0; b--) h += "<i" + ((n >> b) & 1 ? ' class="x"' : "") + "></i>"; }
+    return '<div class="fp" style="--c:' + col + '" title="crash fingerprint ' + hex + '">' + h + "</div>";
+  }
+  var FACE = ["bored", "crash", "ok", "hang", "oom"];
+  function wave(bot, i, col) { var p = bot.eyeXY(i); BG.ripple(p.x, p.y, col); }
+
+  /* ================= act 1: the inbox ================= */
+  var logo = Trio($("#logoBot"), { mini: true }); logo.face("idle");
+  var bot1 = Trio($("#bot1"), { onEye: poke }), caps = $$("#caps span"), verdict = $("#verdict"), tok = 0, mine = ["ok", "ok", "ok"], done = {};
+  $("#tix").innerHTML = D.reports.map(function (r, i) { return '<button type="button" class="tk" aria-pressed="false" data-i="' + i + '">' + esc(r.title) + "<i></i></button>"; }).join("");
+  function cap(i, head, sub, col) { caps[i].innerHTML = head ? '<b style="--c:' + col + '">' + head + "</b>" + (sub || "") : ""; }
+  function fly(el) {
+    if (reduce) return;
+    var a = el.getBoundingClientRect(), b = bot1.slotXY(), g = el.cloneNode(true);
+    g.className = "tk fly"; g.style.cssText = "left:" + a.left + "px;top:" + a.top + "px;width:" + a.width + "px;height:" + a.height + "px";
+    document.body.appendChild(g);
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      g.style.transform = "translate(" + (b.x - a.left - a.width / 2) + "px," + (b.y - a.top - a.height / 2) + "px) scale(.12)"; g.style.opacity = ".2";
+    }); });
+    setTimeout(function () { g.remove(); }, 560);
+  }
+  async function feed(i, scroll) {
+    var my = ++tok, r = D.reports[i], btn = $("#tix").children[i];
+    $$("#tix .tk").forEach(function (b, k) { b.setAttribute("aria-pressed", k === i); });
+    if (scroll) {
+      var bb = bot1.el.getBoundingClientRect();
+      if (bb.top < 0) { bot1.el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" }); await sleep(450); if (my !== tok) return; }
+    }
+    fly(btn);
+    bot1.all("idle"); caps.forEach(function (c, k) { cap(k); });
+    verdict.innerHTML = "<h3>Building " + r.commit + "…</h3><p class=\"mono\">" + esc(r.title) + "</p>";
+    await sleep(700); if (my !== tok) return;
+    if (!r.runs.length) {
+      bot1.all("shut"); var mid = bot1.eyeXY(1); BG.ripple(mid.x, mid.y, 0, 300);
+      verdict.innerHTML = verdictHTML(r.state, r.reason);
+    } else {
+      for (var k = 0; k < 3; k++) {
+        var x = r.runs[k];
+        bot1.set(k, "run"); cap(k, "run " + (k + 1), "running", HUE[0]);
+        await sleep(620); if (my !== tok) return;
+        var s = x.crash ? "crash" : x.timedOut ? "hang" : "ok";
+        bot1.set(k, s); mine[k] = s; wave(bot1, k, KIND[s]);
+        cap(k, x.crash ? "crashed" : x.timedOut ? "killed at limit" : "clean", x.ms + " ms", HUE[KIND[s]]);
+        await sleep(380); if (my !== tok) return;
+      }
+      var extra = r.findings[0] ? esc(r.findings[0]) : (r.evidence && r.evidence.kind === "stderr" ? "it printed a pasted ASan log. reprobot does not read stderr." : "");
+      verdict.innerHTML = verdictHTML(r.state, r.reason, extra);
+      bot1.face(FACE[SAY[r.state][1]]);
+    }
+    done[i] = 1; btn.classList.add("done"); btn.style.setProperty("--c", INK[SAY[r.state][1]]);
+    $("#count").textContent = Object.keys(done).length + " / " + D.reports.length;
+  }
+  function poke(i) {
+    if (i < 0) { bot1.bump = .6; return; }
+    ++tok;
+    $$("#tix .tk").forEach(function (b) { b.setAttribute("aria-pressed", "false"); });
+    var order = ["crash", "ok", "hang", "oom"], names = { crash: "crashed", ok: "clean", hang: "killed at limit", oom: "out of memory" };
+    bot1.eyes.forEach(function (e, k) { if (!names[e.s]) bot1.set(k, mine[k] = "ok"); else mine[k] = e.s; });
+    mine[i] = order[(order.indexOf(mine[i]) + 1) % order.length];
+    bot1.set(i, mine[i]); wave(bot1, i, KIND[mine[i]]);
+    mine.forEach(function (s, k) { cap(k, names[s], "your run " + (k + 1), HUE[KIND[s]]); });
+    var v = RB.decide({ sanitizer: "address", kind: "heap-buffer-overflow" }, mine.map(function (s) {
+      return { crash: s === "crash" ? { sanitizer: "address", kind: "heap-buffer-overflow", signature: "d3c66c5eb2dafff2", frames: [] } : null, timedOut: s === "hang", oom: s === "oom" };
+    }));
+    verdict.innerHTML = verdictHTML(v.state, v.reason, "tap another spot");
+    bot1.face(FACE[SAY[v.state][1]]);
+  }
+  $("#tix").addEventListener("click", function (e) { var b = e.target.closest(".tk"); if (b) feed(+b.getAttribute("data-i"), true); });
+  setTimeout(function () { if (!tok) feed(0, false); }, 1100);
+
+  /* ================= act 2: flip the fix ================= */
+  var cur = 0, at = "vuln", ftok = 0;
+  var bot2 = Trio($("#bot2"), { onEye: function () { setAt(at === "vuln" ? "fix" : "vuln"); } });
+  $("#cves").innerHTML = R.real.map(function (c, i) { return '<button type="button" class="chip" aria-pressed="' + (i === 0) + '" data-i="' + i + '" title="' + esc(c.title) + '">' + c.id + "</button>"; }).join("");
+  async function drawFlip(quiet) {
+    var my = ++ftok, c = R.real[cur], s = c[at], crash = at === "vuln", st = crash ? "crash" : "ok", k;
+    $("#seg").setAttribute("data-at", at);
+    $$("#seg button").forEach(function (b) { var a = b.getAttribute("data-at"); b.setAttribute("aria-pressed", a === at); b.querySelector("small").textContent = c[a].commit.slice(0, 7); });
+    if (!quiet) { bot2.all("run"); await sleep(420); if (my !== ftok) return; }
+    for (k = 0; k < 3; k++) { bot2.set(k, st); if (!quiet) { wave(bot2, k, KIND[st]); await sleep(110); if (my !== ftok) return; } }
+    var h = verdictHTML(s.state, s.reason);
+    h += '<div class="frame">' + (crash ? "<b>" + esc(s.kind) + "</b> in <b>" + esc(s.frames[0].fn) + "</b>" : esc(c.title)) + "</div>";
+    if (crash) h += fp(s.signature, HUE[1]);
+    h += '<div class="links"><a href="' + GH + "eval/libxml2/" + c.dir + '/repro.yaml">repro.yaml</a><a href="' + GH + 'eval/libxml2/RESULTS.md">all results</a></div>';
+    $("#v2").innerHTML = h;
+  }
+  function setAt(a) { at = a; drawFlip(); }
+  $("#cves").addEventListener("click", function (e) {
+    var b = e.target.closest(".chip"); if (!b) return;
+    cur = +b.getAttribute("data-i"); at = "vuln";
+    $$("#cves .chip").forEach(function (x, i) { x.setAttribute("aria-pressed", i === cur); });
+    drawFlip();
+  });
+  $("#seg").addEventListener("click", function (e) { var b = e.target.closest("button"); if (b) setAt(b.getAttribute("data-at")); });
+  drawFlip(true);
+
+  /* ================= act 3: cheat ================= */
+  var E2E = "internal/runner/runner_e2e_test.go", RT = "internal/runner/runner_test.go";
+  var TRICKS = [
+    { t: "Paste a real ASan log", lock: 1, state: "NOT_REPRODUCED", why: "reprobot never reads what the program prints. Only the sanitizer's own file counts.", test: "TestE2EFakeReportOnStderrIsIgnored", f: E2E },
+    { t: "Run my own shell script", lock: 0, state: "INVALID_INPUT", why: "A shell is not something the project builds, so nothing runs at all.", test: "TestE2EReporterShellIsRejected", f: E2E },
+    { t: "Write the log file myself", lock: 1, state: "NOT_REPRODUCED", why: "The folder has a new random name every run, and its parent cannot be listed.", test: "TestMakeOutDirModes", f: RT },
+    { t: "Exit with a failing code", lock: 2, state: "NOT_REPRODUCED", why: "Each run has its own secret code from 64 to 120. Exit 1 does not match.", test: "TestRunIgnoresReportWithWrongExitCode", f: RT },
+    { t: "Plant a symlink", lock: 1, state: "NOT_REPRODUCED", why: "Log files are opened with O_NOFOLLOW. Symlinks and FIFOs are skipped.", test: "TestCollectReportSkipsSymlinksAndFifos", f: RT },
+    { t: "Cite made-up functions", lock: 1, state: "NOT_REPRODUCED", why: "No crash in 3 runs, and the invented names are listed next to the verdict.", test: "TestE2EInventedFunctionIsAFinding", f: E2E }
+  ];
+  var bot3 = Trio($("#bot3"), { onEye: function () { bot3.bump = .6; } }), locks = $$("#locks .lock"), ctok = 0;
+  bot3.all("bored");
+  $("#tricks").innerHTML = TRICKS.map(function (t, i) { return '<button type="button" class="chip big" aria-pressed="false" data-i="' + i + '">' + esc(t.t) + "</button>"; }).join("");
+  $("#why").innerHTML = '<span class="mono">pick a trick</span>';
+  $("#tricks").addEventListener("click", async function (e) {
+    var b = e.target.closest(".chip"); if (!b) return;
+    var my = ++ctok, t = TRICKS[+b.getAttribute("data-i")];
+    $$("#tricks .chip").forEach(function (x) { x.setAttribute("aria-pressed", x === b); });
+    locks.forEach(function (l) { l.classList.remove("hit"); });
+    $("#why").innerHTML = "";
+    if (t.lock === 0) bot3.all("shut");
+    else { bot3.all("run"); await sleep(520); if (my !== ctok) return; bot3.all("ok"); }
+    await sleep(160); if (my !== ctok) return;
+    locks[t.lock].classList.add("hit");
+    var lb = locks[t.lock].getBoundingClientRect(); BG.ripple(lb.left + lb.width / 2, lb.top + lb.height / 2, t.lock === 0 ? 0 : 2, 380);
+    $("#why").innerHTML = "<b>" + SAY[t.state][0] + "</b> " + esc(t.why) + ' <a href="' + GH + t.f + '" title="' + t.test + '">see the test</a>';
+    await sleep(2600); if (my === ctok) bot3.all("bored");
+  });
+
+  /* ================= misc ================= */
+  function copy() {
+    var s = $("#cmdS"), text = "go install github.com/DCchoudhury15/reprobot/cmd/reprobot@latest";
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () { s.textContent = "copied"; }, function () { s.textContent = "select it"; });
+    setTimeout(function () { s.textContent = "copy"; }, 1400);
+  }
+  $("#cmd").addEventListener("click", copy);
+  $("#cmd").addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); copy(); } });
+  if (typeof IntersectionObserver === "function") {
+    var io = new IntersectionObserver(function (es) { es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }); }, { rootMargin: "0px 0px -8% 0px" });
+    $$(".rv").forEach(function (e) { io.observe(e); });
+  } else $$(".rv").forEach(function (e) { e.classList.add("in"); });
+})();
+</script>
 </body>
 </html>
