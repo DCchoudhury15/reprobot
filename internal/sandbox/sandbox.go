@@ -33,20 +33,20 @@ type Mount struct {
 
 // Spec describes one sandboxed command.
 type Spec struct {
-	Image        string
-	Cmd          []string
-	User         string // "uid:gid"; empty means the image default
-	Env          map[string]string
-	WorkDir      string
-	Mounts       []Mount
+	Image            string
+	Cmd              []string
+	User             string // "uid:gid"; empty means the image default
+	Env              map[string]string
+	WorkDir          string
+	Mounts           []Mount
 	Network          bool   // false means no network at all
 	NetworkContainer string // share another container's network namespace
 	CPUs             float64
-	MemoryMB     int
-	PidsLimit    int
-	Timeout      time.Duration // zero means no limit other than ctx
-	ReadOnlyRoot bool
-	TmpfsMB      int // size of the /tmp tmpfs
+	MemoryMB         int
+	PidsLimit        int
+	Timeout          time.Duration // zero means no limit other than ctx
+	ReadOnlyRoot     bool
+	TmpfsMB          int // size of the /tmp tmpfs
 }
 
 // Outcome is what happened.
