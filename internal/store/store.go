@@ -39,6 +39,21 @@ var (
 	ErrNotFound = errors.New("store: not found")
 )
 
+// RateLimitError means the owner already sent MaxPerHour reports in the
+// last hour.
+type RateLimitError struct {
+	RetryAfter time.Duration // until the oldest of them leaves the window
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("store: too many reports, retry in %s", e.RetryAfter.Round(time.Second))
+}
+
+// rateLockClass is the first key of the per-owner advisory lock that makes
+// the rate limit exact. Two-key advisory locks do not share keys with the
+// one-key lock Migrate takes.
+const rateLockClass int32 = 0x7262 // "rb"
+
 // maxBackoff caps the wait before a failed job is tried again.
 const maxBackoff = 5 * time.Minute
 
@@ -82,12 +97,16 @@ type ReportInput struct {
 	IdempotencyKey string // optional, unique per Owner
 	ReproHash      string // optional
 	Dir            string // directory with repro.yaml and the reporter files
+	// MaxPerHour, when above 0 and Owner is set, caps the reports Owner
+	// may create in any hour. A repeat of an existing IdempotencyKey does
+	// not count.
+	MaxPerHour int
 }
 
 // CreateReport stores a report and queues one job for it, in one
 // transaction. If IdempotencyKey is set and a report with that key already
 // exists for the same Owner, it returns the existing ids with created=false
-// and writes nothing.
+// and writes nothing. Past MaxPerHour it returns a *RateLimitError.
 func (s *Store) CreateReport(ctx context.Context, in ReportInput) (reportID uuid.UUID, jobID int64, created bool, err error) {
 	var idArg any
 	if in.ID != uuid.Nil {
@@ -98,6 +117,14 @@ func (s *Store) CreateReport(ctx context.Context, in ReportInput) (reportID uuid
 		return uuid.Nil, 0, false, err
 	}
 	defer tx.Rollback(ctx)
+	limited := in.Owner != "" && in.MaxPerHour > 0
+	if limited {
+		// Held until commit, so two requests of one owner count one after
+		// the other and cannot both slip under the limit.
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1, hashtext($2))", rateLockClass, in.Owner); err != nil {
+			return uuid.Nil, 0, false, err
+		}
+	}
 
 	// ON CONFLICT DO NOTHING also covers two requests with the same key at
 	// the same time: the second insert waits for the first transaction and
@@ -123,6 +150,12 @@ func (s *Store) CreateReport(ctx context.Context, in ReportInput) (reportID uuid
 	}
 	if err != nil {
 		return uuid.Nil, 0, false, err
+	}
+	if limited {
+		// The count includes the new report, which rollback removes.
+		if err := recentLimit(ctx, tx, in.Owner, in.MaxPerHour+1); err != nil {
+			return uuid.Nil, 0, false, err
+		}
 	}
 	if err := tx.QueryRow(ctx,
 		"INSERT INTO jobs (report_id) VALUES ($1) RETURNING id", reportID,
@@ -315,6 +348,38 @@ func (s *Store) Fail(ctx context.Context, jobID int64, workerID string, errText 
 		return ErrLeaseLost
 	}
 	return nil
+}
+
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// recentLimit returns a *RateLimitError when owner has at least limit
+// reports from the last hour.
+func recentLimit(ctx context.Context, q querier, owner string, limit int) error {
+	var n int
+	var retry float64
+	err := q.QueryRow(ctx, `
+		SELECT count(*), coalesce(extract(epoch FROM min(created_at) + interval '1 hour' - now()), 0)
+		FROM reports WHERE owner = $1 AND created_at > now() - interval '1 hour'`, owner,
+	).Scan(&n, &retry)
+	if err != nil {
+		return err
+	}
+	if n < limit {
+		return nil
+	}
+	return &RateLimitError{RetryAfter: max(time.Duration(retry*float64(time.Second)), time.Second)}
+}
+
+// CheckRate returns a *RateLimitError when owner already has maxPerHour
+// reports from the last hour. It is a cheap early check: CreateReport
+// enforces the limit exactly.
+func (s *Store) CheckRate(ctx context.Context, owner string, maxPerHour int) error {
+	if owner == "" || maxPerHour <= 0 {
+		return nil
+	}
+	return recentLimit(ctx, s.pool, owner, maxPerHour)
 }
 
 // Report is a report with the state of its job and its result, if any.

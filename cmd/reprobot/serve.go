@@ -70,6 +70,7 @@ func serveCmd(args []string) int {
 	projectsDir := fs.String("projects", "", "directory with one <project>.yaml per project (required)")
 	addr := fs.String("addr", "127.0.0.1:8080", "listen address")
 	tokensPath := fs.String("tokens", "", "tokens file (see `reprobot token`); without it the API is open and only a loopback --addr is allowed")
+	perHour := fs.Int("reports-per-hour", 20, "most reports one token may send in any hour; 0 means no limit (needs --tokens)")
 	noAuth := fs.Bool("insecure-no-auth", false, "allow a non-loopback --addr without --tokens, for use behind a proxy that authenticates users")
 	if code := parseFlags(fs, args, "db", "data", "projects"); code >= 0 {
 		return code
@@ -77,6 +78,9 @@ func serveCmd(args []string) int {
 	fail := func(err error) int {
 		fmt.Fprintln(os.Stderr, "reprobot serve:", err)
 		return 1
+	}
+	if *perHour < 0 {
+		return fail(fmt.Errorf("--reports-per-hour must be 0 or more"))
 	}
 	if err := checkAuthConfig(*addr, *tokensPath, *noAuth); err != nil {
 		return fail(err)
@@ -103,7 +107,7 @@ func serveCmd(args []string) int {
 	}
 	defer st.Close()
 
-	srv := &server.Server{Store: st, DataDir: *dataDir, ProjectsDir: *projectsDir, Tokens: tokens}
+	srv := &server.Server{Store: st, DataDir: *dataDir, ProjectsDir: *projectsDir, Tokens: tokens, ReportsPerHour: *perHour}
 	hs := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,

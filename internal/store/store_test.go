@@ -118,8 +118,8 @@ func TestMigrateConcurrentAndRepeated(t *testing.T) {
 	if err := stores[0].Migrate(ctx); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
-	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 3 {
-		t.Errorf("schema_migrations rows = %d, want 3", n)
+	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 4 {
+		t.Errorf("schema_migrations rows = %d, want 4", n)
 	}
 }
 
@@ -595,5 +595,66 @@ func TestGetReportNotFound(t *testing.T) {
 	st := storetest.New(t)
 	if _, err := st.GetReport(context.Background(), uuid.New()); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetReport = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCreateReportPerHourLimit(t *testing.T) {
+	st := storetest.New(t)
+	ctx := context.Background()
+	in := func(owner string) store.ReportInput {
+		return store.ReportInput{Project: "p", Owner: owner, Dir: "/d", MaxPerHour: 3}
+	}
+	// Ten at once: the per-owner lock lets exactly three through.
+	var wg sync.WaitGroup
+	errs := make([]error, 10)
+	for i := range errs {
+		wg.Go(func() { _, _, _, errs[i] = st.CreateReport(ctx, in("alice")) })
+	}
+	wg.Wait()
+	var ok, limited int
+	for _, err := range errs {
+		var rle *store.RateLimitError
+		switch {
+		case err == nil:
+			ok++
+		case errors.As(err, &rle) && rle.RetryAfter > 59*time.Minute && rle.RetryAfter <= time.Hour:
+			limited++
+		default:
+			t.Errorf("CreateReport: %v", err)
+		}
+	}
+	if ok != 3 || limited != 7 {
+		t.Errorf("%d created, %d limited; want 3 and 7", ok, limited)
+	}
+	if n := count(t, st, "SELECT count(*) FROM jobs"); n != 3 {
+		t.Errorf("%d jobs, want 3", n)
+	}
+	if err := st.CheckRate(ctx, "alice", 3); err == nil {
+		t.Error("CheckRate at the limit = nil")
+	}
+	for _, owner := range []string{"bob", ""} {
+		if err := st.CheckRate(ctx, owner, 3); err != nil {
+			t.Errorf("CheckRate(%q) = %v", owner, err)
+		}
+	}
+	// No owner, or no limit set: never limited.
+	for i := 0; i < 4; i++ {
+		if _, _, _, err := st.CreateReport(ctx, in("")); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := st.CreateReport(ctx, store.ReportInput{Project: "p", Owner: "carol", Dir: "/d"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Once the oldest is more than an hour old, one more fits.
+	if _, err := st.Pool().Exec(ctx, `UPDATE reports SET created_at = now() - interval '61 minutes'
+		WHERE id = (SELECT id FROM reports WHERE owner = 'alice' ORDER BY created_at LIMIT 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := st.CreateReport(ctx, in("alice")); err != nil {
+		t.Errorf("after the window moved: %v", err)
+	}
+	if _, _, _, err := st.CreateReport(ctx, in("alice")); err == nil {
+		t.Error("over the limit again: nil error")
 	}
 }

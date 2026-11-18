@@ -41,7 +41,16 @@ same crash. An `Idempotency-Key` is unique per token: two reporters who
 pick the same key get two reports. Reports sent while the server ran
 without tokens have no owner, so only maintainer tokens read them.
 
-There is no rate limit yet. Without `--tokens` the API is open;
+Each report costs a build and three sandboxed runs, so a token may send
+at most `--reports-per-hour` reports (default 20, `0` turns it off) in any
+hour. Over that, `POST /v1/reports` gets `429` with a `Retry-After` header
+in seconds. A request without an `Idempotency-Key` is refused before its
+upload is read; repeating an earlier request with the same key returns the
+earlier report and does not count. The count lives in the database, so it
+holds across restarts and several `serve` processes. Without `--tokens`
+there is no limit.
+
+Without `--tokens` the API is open;
 `serve` then refuses a non-loopback `--addr` unless `--insecure-no-auth` is
 given, for use behind a reverse proxy that authenticates users. Serve over
 TLS (for example behind that proxy) so tokens are not sent in clear text.

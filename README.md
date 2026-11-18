@@ -82,9 +82,10 @@ the fix commit. Three reports about bugs that do not exist give
 
 Early. Working: the CLI, sandboxed builds and runs, ASan and UBSan parsing,
 crash signatures and crash lines, the static claim check, the job queue,
-intake API with token auth and per-token report access, and result page. Not yet: OSS-Fuzz project
-import, a GitHub App for private vulnerability reports, signed results, gVisor
-by default, and rate limits.
+intake API with token auth, per-token report access and a per-token
+submit limit, and result page. Not yet: OSS-Fuzz project
+import, a GitHub App for private vulnerability reports, signed results, and gVisor
+by default.
 
 ## License
 

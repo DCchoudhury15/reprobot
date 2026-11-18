@@ -6,10 +6,12 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/DCchoudhury15/reprobot/internal/result"
+	"github.com/DCchoudhury15/reprobot/internal/server"
 	"github.com/DCchoudhury15/reprobot/internal/store"
 )
 
@@ -145,5 +147,68 @@ func TestIdempotencyKeyIsPerToken(t *testing.T) {
 	}
 	if code, _ := e.getAs(t, secret["alice"], a.StatusURL); code != http.StatusOK {
 		t.Errorf("alice reads her own report: %d", code)
+	}
+}
+
+func TestReportsPerHour(t *testing.T) {
+	tokens, secret := tokensFile(t, "alice", "bob")
+	e := newEnvWith(t, func(s *server.Server) {
+		s.Tokens = tokens
+		s.ReportsPerHour = 2
+		s.MaxBodyBytes = 64 << 10
+	})
+	post := func(who, key string, body io.Reader, ctype string) (int, http.Header, []byte) {
+		t.Helper()
+		if body == nil {
+			body, ctype = form(t, goodRepro, nil, nil)
+		}
+		req, _ := http.NewRequest("POST", e.ts.URL+"/v1/reports", body)
+		req.Header.Set("Content-Type", ctype)
+		req.Header.Set("Authorization", "Bearer "+secret[who])
+		if key != "" {
+			req.Header.Set("Idempotency-Key", key)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		out, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header, out
+	}
+	code1, _, out1 := post("alice", "k1", nil, "")
+	code2, _, _ := post("alice", "", nil, "")
+	if code1 != http.StatusAccepted || code2 != http.StatusAccepted {
+		t.Fatalf("first two: %d %d", code1, code2)
+	}
+	first := decode[createResp](t, out1)
+
+	// Over the limit, with and without a key. Without a key the upload is
+	// not read, so even a body over the size limit gets 429, not 413.
+	big, bigType := form(t, goodRepro, []file{{name: "big.bin", data: make([]byte, 128<<10)}}, nil)
+	for name, c := range map[string]struct {
+		key   string
+		body  io.Reader
+		ctype string
+	}{
+		"no key":  {},
+		"new key": {key: "k2"},
+		"too big": {body: big, ctype: bigType},
+	} {
+		code, h, out := post("alice", c.key, c.body, c.ctype)
+		retry, err := strconv.Atoi(h.Get("Retry-After"))
+		if code != http.StatusTooManyRequests || err != nil || retry < 3500 || retry > 3600 {
+			t.Errorf("%s: %d Retry-After %q: %s", name, code, h.Get("Retry-After"), out)
+		}
+	}
+	e.assertNoNewReports(t, 2)
+
+	// A repeat of an earlier request is not a new report.
+	if code, _, out := post("alice", "k1", nil, ""); code != http.StatusOK || decode[createResp](t, out) != first {
+		t.Errorf("repeat of k1: %d %s", code, out)
+	}
+	// The limit is per token.
+	if code, _, out := post("bob", "", nil, ""); code != http.StatusAccepted {
+		t.Errorf("bob: %d %s", code, out)
 	}
 }

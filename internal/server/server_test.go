@@ -39,6 +39,12 @@ func newEnv(t *testing.T) *env { t.Helper(); return newEnvTokens(t, nil) }
 
 func newEnvTokens(t *testing.T, tokens *server.Tokens) *env {
 	t.Helper()
+	return newEnvWith(t, func(s *server.Server) { s.Tokens = tokens })
+}
+
+// newEnvWith is newEnv with set changing the server before it starts.
+func newEnvWith(t *testing.T, set func(*server.Server)) *env {
+	t.Helper()
 	st := storetest.New(t)
 	projects := t.TempDir()
 	if err := os.WriteFile(filepath.Join(projects, "tinyparse.yaml"), []byte("id: tinyparse\n"), 0o644); err != nil {
@@ -48,7 +54,8 @@ func newEnvTokens(t *testing.T, tokens *server.Tokens) *env {
 		t.Fatal(err)
 	}
 	e := &env{st: st, dataDir: t.TempDir()}
-	srv := &server.Server{Store: st, DataDir: e.dataDir, ProjectsDir: projects, Tokens: tokens}
+	srv := &server.Server{Store: st, DataDir: e.dataDir, ProjectsDir: projects}
+	set(srv)
 	e.ts = httptest.NewServer(srv.Handler())
 	t.Cleanup(e.ts.Close)
 	return e

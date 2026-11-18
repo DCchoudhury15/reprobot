@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -54,6 +55,9 @@ type Server struct {
 	ProjectsDir  string  // holds <project>.yaml files
 	MaxBodyBytes int64   // 0 means DefaultMaxBodyBytes
 	Tokens       *Tokens // nil means no authentication
+	// ReportsPerHour caps the reports one token may send in any hour; 0
+	// means no limit. Without Tokens there is no limit.
+	ReportsPerHour int
 }
 
 // Handler returns the HTTP handler with all routes.
@@ -103,7 +107,13 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func writeError(w http.ResponseWriter, err error) {
 	var he *httpError
 	var mbe *http.MaxBytesError
+	var rle *store.RateLimitError
 	switch {
+	case errors.As(err, &rle):
+		secs := int((rle.RetryAfter + time.Second - 1) / time.Second)
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		writeJSON(w, http.StatusTooManyRequests,
+			map[string]string{"error": fmt.Sprintf("too many reports from this token; retry in %d seconds", secs)})
 	case errors.As(err, &mbe):
 		writeJSON(w, http.StatusRequestEntityTooLarge,
 			map[string]string{"error": fmt.Sprintf("request body is larger than %d bytes", mbe.Limit)})
@@ -126,6 +136,19 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 	if err := checkText("Idempotency-Key", key, maxKeyBytes); err != nil {
 		writeError(w, err)
 		return
+	}
+	var owner string
+	if c := callerFrom(r.Context()); c != nil {
+		owner = c.name
+	}
+	// Refuse before reading the upload. A request with a key may repeat
+	// an earlier one, which does not count, so it goes on to the exact
+	// check in CreateReport.
+	if key == "" {
+		if err := s.Store.CheckRate(r.Context(), owner, s.ReportsPerHour); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxBody())
 	mr, err := r.MultipartReader()
@@ -177,16 +200,13 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	var owner string
-	if c := callerFrom(r.Context()); c != nil {
-		owner = c.name
-	}
 	reportID, jobID, created, err := s.Store.CreateReport(r.Context(), store.ReportInput{
 		ID:             id,
 		Project:        project,
 		Reporter:       up.reporter,
 		Owner:          owner,
 		IdempotencyKey: key,
+		MaxPerHour:     s.ReportsPerHour,
 		ReproHash:      up.hash,
 		Dir:            dir,
 	})
