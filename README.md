@@ -63,6 +63,23 @@ See `testdata/fixtures/tinyparse` for a complete example project and
 reproducer. The service (intake API, Postgres job queue, workers) is described
 in [docs/SERVICE.md](docs/SERVICE.md).
 
+## Signed results
+
+A signed result lets someone else check a verdict without rerunning it, for
+example when it is pasted into an advisory. The result already names the
+exact commit, build image and reproducer hash it tested, and the signature
+covers all of it.
+
+```
+reprobot keygen ~/.config/reprobot     # signing.key (keep it) + signing.pub (publish it)
+reprobot run --project project.yaml --sign-key ~/.config/reprobot/signing.key repro.yaml > result.dsse.json
+reprobot verify --key signing.pub result.dsse.json   # anyone with the public key
+```
+
+The file is a standard [DSSE](https://github.com/secure-systems-lab/dsse)
+envelope signed with Ed25519, so other DSSE tools can check it too.
+`verify` prints the result JSON only when the signature is good.
+
 ## Tests
 
 ```
@@ -83,9 +100,9 @@ the fix commit. Three reports about bugs that do not exist give
 Early. Working: the CLI, sandboxed builds and runs, ASan and UBSan parsing,
 crash signatures and crash lines, the static claim check, the job queue,
 intake API with token auth, per-token report access and a per-token
-submit limit, and result page. Not yet: OSS-Fuzz project
-import, a GitHub App for private vulnerability reports, signed results, and gVisor
-by default.
+submit limit, result page, and signed results from the CLI. Not yet: OSS-Fuzz project
+import, a GitHub App for private vulnerability reports, signed results from
+the service, and gVisor by default.
 
 ## License
 

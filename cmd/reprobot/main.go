@@ -7,10 +7,12 @@ import (
 )
 
 const usage = `usage:
-  reprobot run --project project.yaml [--cache DIR] [--json] repro.yaml
+  reprobot run --project project.yaml [--cache DIR] [--json | --sign-key KEY] repro.yaml
   reprobot serve [flags]
   reprobot worker [flags]
-  reprobot token NAME >> tokens-file`
+  reprobot token NAME >> tokens-file
+  reprobot keygen DIR
+  reprobot verify --key signing.pub ENVELOPE`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -27,6 +29,10 @@ func main() {
 		os.Exit(workerCmd(args))
 	case "token":
 		os.Exit(tokenCmd(args, os.Stdout, os.Stderr))
+	case "keygen":
+		os.Exit(keygenCmd(args, os.Stdout, os.Stderr))
+	case "verify":
+		os.Exit(verifyCmd(args, os.Stdin, os.Stdout, os.Stderr))
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)

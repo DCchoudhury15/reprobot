@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/DCchoudhury15/reprobot/internal/result"
 	"github.com/DCchoudhury15/reprobot/internal/runner"
+	"github.com/DCchoudhury15/reprobot/internal/sign"
 )
 
 // Exit codes of "reprobot run".
@@ -26,12 +28,13 @@ const (
 	exitInfra     = 3 // infrastructure error (Docker, disk, network)
 )
 
-const runUsage = `usage: reprobot run --project project.yaml [--cache DIR] [--json] repro.yaml
+const runUsage = `usage: reprobot run --project project.yaml [--cache DIR] [--json | --sign-key KEY] repro.yaml
 
   --project FILE  maintainer project config (required)
   --cache DIR     git mirrors and build cache
                   (default $XDG_CACHE_HOME/reprobot, else ~/.cache/reprobot)
   --json          print the result as JSON
+  --sign-key KEY  print the result as a signed envelope (see reprobot keygen)
 
 Flags go before repro.yaml.
 Exit codes: 0 reproduced as claimed, 1 any other verdict, 2 usage error,
@@ -41,6 +44,7 @@ type runArgs struct {
 	project string
 	cache   string
 	json    bool
+	signKey string
 	repro   string
 }
 
@@ -60,6 +64,14 @@ func runMain(ctx context.Context, args []string, stdout, stderr io.Writer, run f
 		fmt.Fprintf(stderr, "reprobot run: %v\n\n%s\n", err, runUsage)
 		return exitUsage
 	}
+	// Load the key first, so a bad key fails before a long run.
+	var key ed25519.PrivateKey
+	if a.signKey != "" {
+		if key, err = sign.LoadPrivateKey(a.signKey); err != nil {
+			fmt.Fprintf(stderr, "reprobot run: %v\n", err)
+			return exitUsage
+		}
+	}
 	if a.cache == "" {
 		if a.cache, err = defaultCacheDir(); err != nil {
 			fmt.Fprintf(stderr, "reprobot run: %v\n", err)
@@ -71,14 +83,24 @@ func runMain(ctx context.Context, args []string, stdout, stderr io.Writer, run f
 		fmt.Fprintf(stderr, "reprobot run: %v\n", err)
 		return exitInfra
 	}
-	if a.json {
+	switch {
+	case key != nil:
+		payload, err := json.Marshal(res)
+		if err == nil {
+			err = writeIndented(stdout, sign.Sign(key, payload))
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "reprobot run: %v\n", err)
+			return exitInfra
+		}
+	case a.json:
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(res); err != nil {
 			fmt.Fprintf(stderr, "reprobot run: %v\n", err)
 			return exitInfra
 		}
-	} else {
+	default:
 		printResult(stdout, res)
 	}
 	return exitCode(res.State)
@@ -91,12 +113,15 @@ func parseRunArgs(args []string) (runArgs, error) {
 	fs.StringVar(&a.project, "project", "", "")
 	fs.StringVar(&a.cache, "cache", "", "")
 	fs.BoolVar(&a.json, "json", false, "")
+	fs.StringVar(&a.signKey, "sign-key", "", "")
 	if err := fs.Parse(args); err != nil {
 		return a, err
 	}
 	switch {
 	case a.project == "":
 		return a, errors.New("--project is required")
+	case a.json && a.signKey != "":
+		return a, errors.New("--json and --sign-key do not go together; the envelope holds the JSON")
 	case fs.NArg() == 0:
 		return a, errors.New("missing repro.yaml")
 	case fs.NArg() > 1:
