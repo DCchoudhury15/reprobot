@@ -25,8 +25,23 @@ and the sha256 of the token, so the tokens file holds no secrets. Start
 A missing or wrong token gets `401`, before the upload is read. To remove a
 token, delete its line and restart `serve`.
 
-Every token can submit and read every report: there are no roles and no
-per-user access yet, and no rate limit. Without `--tokens` the API is open;
+Any token can submit a report for any project. Who can read a report
+depends on the token:
+
+- A reporter token (a plain `NAME SHA256` line) reads only the reports it
+  submitted.
+- A maintainer token has a third field, the projects whose reports it
+  reads: `NAME SHA256 curl,libxml2`, or `NAME SHA256 *` for every project.
+  Add it by hand after `reprobot token` prints the line.
+
+A report the token may not read gets `404`, the same as an id that does not
+exist. The duplicate and related lists on a report only show reports the
+token may read, so a reporter does not learn that someone else sent the
+same crash. An `Idempotency-Key` is unique per token: two reporters who
+pick the same key get two reports. Reports sent while the server ran
+without tokens have no owner, so only maintainer tokens read them.
+
+There is no rate limit yet. Without `--tokens` the API is open;
 `serve` then refuses a non-loopback `--addr` unless `--insecure-no-auth` is
 given, for use behind a reverse proxy that authenticates users. Serve over
 TLS (for example behind that proxy) so tokens are not sent in clear text.

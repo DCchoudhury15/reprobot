@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -18,12 +19,62 @@ import (
 // Tokens are the API tokens a server accepts. Only the sha256 of each token
 // is kept, so the tokens file holds no secrets.
 //
-// File format: one "NAME SHA256HEX" pair per line. Blank lines and lines
-// that start with # are skipped. `reprobot token NAME` prints a new token
-// and its line.
+// File format: one "NAME SHA256HEX [PROJECTS]" line per token. Blank lines
+// and lines that start with # are skipped. `reprobot token NAME` prints a
+// new token and its line.
+//
+// PROJECTS makes the token a maintainer token: a comma separated list of
+// project ids whose reports it may read, or "*" for every project. A token
+// without it is a reporter token and reads only the reports it submitted.
+// Any token may submit a report for any project.
 type Tokens struct {
 	names []string
 	sums  [][sha256.Size]byte
+	reads []projectSet
+}
+
+// projectSet is the projects a token reads every report of.
+type projectSet struct {
+	all bool
+	ids map[string]bool
+}
+
+func parseProjects(field string) (projectSet, error) {
+	if field == "*" {
+		return projectSet{all: true}, nil
+	}
+	ps := projectSet{ids: map[string]bool{}}
+	for _, id := range strings.Split(field, ",") {
+		if !projectID.MatchString(id) {
+			return projectSet{}, fmt.Errorf("bad project id %q in the projects list", id)
+		}
+		ps.ids[id] = true
+	}
+	return ps, nil
+}
+
+// caller is who sent a request. A nil *caller means the server runs
+// without tokens, and everyone reads everything.
+type caller struct {
+	name  string
+	reads projectSet
+}
+
+// canRead reports whether c may read a report of project submitted by
+// owner (empty when it was submitted without a token; token names are
+// never empty, so that matches no reporter).
+func (c *caller) canRead(project, owner string) bool {
+	if c == nil {
+		return true
+	}
+	return owner == c.name || c.reads.all || c.reads.ids[project]
+}
+
+type callerKey struct{}
+
+func callerFrom(ctx context.Context) *caller {
+	c, _ := ctx.Value(callerKey{}).(*caller)
+	return c
 }
 
 var tokenName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$`)
@@ -49,8 +100,14 @@ func LoadTokens(path string) (*Tokens, error) {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			return nil, fmt.Errorf("%s:%d: want NAME SHA256HEX", path, n)
+		if len(fields) != 2 && len(fields) != 3 {
+			return nil, fmt.Errorf("%s:%d: want NAME SHA256HEX [PROJECTS]", path, n)
+		}
+		var reads projectSet
+		if len(fields) == 3 {
+			if reads, err = parseProjects(fields[2]); err != nil {
+				return nil, fmt.Errorf("%s:%d: %v", path, n, err)
+			}
 		}
 		name, hexSum := fields[0], fields[1]
 		if !tokenName.MatchString(name) {
@@ -71,6 +128,7 @@ func LoadTokens(path string) (*Tokens, error) {
 		seenName[name], seenSum[sum] = true, true
 		t.names = append(t.names, name)
 		t.sums = append(t.sums, sum)
+		t.reads = append(t.reads, reads)
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
@@ -95,11 +153,11 @@ func NewToken(name string) (token, line string, err error) {
 	return token, name + " " + hex.EncodeToString(sum[:]), nil
 }
 
-// check returns the name of the token, if it is one of t. Every entry is
+// check returns who holds the token, if it is one of t. Every entry is
 // compared, in constant time, so the timing does not show which matched.
-func (t *Tokens) check(token string) (string, bool) {
+func (t *Tokens) check(token string) (*caller, bool) {
 	if token == "" || len(token) > maxTokenBytes {
-		return "", false
+		return nil, false
 	}
 	sum := sha256.Sum256([]byte(token))
 	found := -1
@@ -109,9 +167,9 @@ func (t *Tokens) check(token string) (string, bool) {
 		}
 	}
 	if found < 0 {
-		return "", false
+		return nil, false
 	}
-	return t.names[found], true
+	return &caller{name: t.names[found], reads: t.reads[found]}, true
 }
 
 // presentedToken reads "Authorization: Bearer TOKEN", or Basic auth with
@@ -132,14 +190,14 @@ func presentedToken(r *http.Request) string {
 // reads the body.
 func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name, ok := s.Tokens.check(presentedToken(r))
+		c, ok := s.Tokens.check(presentedToken(r))
 		if !ok {
 			w.Header().Set("WWW-Authenticate", `Basic realm="reprobot", charset="UTF-8"`)
 			w.Header().Add("WWW-Authenticate", `Bearer realm="reprobot"`)
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "a valid API token is required"})
 			return
 		}
-		slog.Debug("authenticated", "token", name, "method", r.Method, "path", r.URL.Path)
-		next.ServeHTTP(w, r)
+		slog.Debug("authenticated", "token", c.name, "method", r.Method, "path", r.URL.Path)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), callerKey{}, c)))
 	})
 }

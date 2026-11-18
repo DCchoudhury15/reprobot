@@ -14,16 +14,21 @@ import (
 	"github.com/DCchoudhury15/reprobot/internal/server"
 )
 
-// tokensFile writes the lines for new tokens named names and returns the
-// loaded tokens and the token of each name.
-func tokensFile(t *testing.T, names ...string) (*server.Tokens, map[string]string) {
+// tokensFile writes the lines for new tokens and returns the loaded tokens
+// and the token of each name. Each entry is "NAME" for a reporter token or
+// "NAME PROJECTS" for a maintainer token.
+func tokensFile(t *testing.T, entries ...string) (*server.Tokens, map[string]string) {
 	t.Helper()
 	secret := map[string]string{}
 	var lines []string
-	for _, n := range names {
+	for _, e := range entries {
+		n, projects, _ := strings.Cut(e, " ")
 		tok, line, err := server.NewToken(n)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if projects != "" {
+			line += " " + projects
 		}
 		secret[n] = tok
 		lines = append(lines, line)
@@ -41,7 +46,7 @@ func tokensFile(t *testing.T, names ...string) (*server.Tokens, map[string]strin
 }
 
 func TestTokensGuardEveryRouteButHealth(t *testing.T) {
-	tokens, secret := tokensFile(t, "alice", "maint@example.org")
+	tokens, secret := tokensFile(t, "alice", "maint@example.org tinyparse")
 	e := newEnvTokens(t, tokens)
 	id := finish(t, e.st, "tinyparse", &result.Result{State: result.NotReproduced})
 
@@ -99,10 +104,15 @@ func TestTokensGuardEveryRouteButHealth(t *testing.T) {
 	}
 	e.assertNoNewReports(t, 1)
 
+	// The report has no owner, so only the maintainer token reads it;
+	// alice, a reporter token, still gets past authentication to submit.
+	if code, _, out := do("POST", "/v1/reports", bearer(secret["alice"])); code != http.StatusAccepted {
+		t.Errorf("POST with alice's token: %d %s", code, out)
+	}
 	okCodes := map[string]int{"POST": http.StatusAccepted, "GET": http.StatusOK}
 	for _, rt := range routes {
-		for _, auth := range []func(*http.Request){bearer(secret["alice"]), basic(secret["maint@example.org"]),
-			func(r *http.Request) { r.Header.Set("Authorization", "bearer  "+secret["alice"]) }} {
+		for _, auth := range []func(*http.Request){bearer(secret["maint@example.org"]), basic(secret["maint@example.org"]),
+			func(r *http.Request) { r.Header.Set("Authorization", "bearer  "+secret["maint@example.org"]) }} {
 			if code, _, out := do(rt[0], rt[1], auth); code != okCodes[rt[0]] {
 				t.Errorf("%s %s with a good token: %d %s", rt[0], rt[1], code, out)
 			}
@@ -155,7 +165,10 @@ func TestLoadTokensRejects(t *testing.T) {
 		"empty":           "",
 		"only comments":   "# nothing\n\n",
 		"one field":       "alice\n",
-		"three fields":    line + " extra\n",
+		"four fields":     line + " p1 p2\n",
+		"bad project":     line + " Tiny\n",
+		"empty project":   line + " a,,b\n",
+		"star in list":    line + " a,*\n",
 		"short hash":      "alice " + hash[:60] + "\n",
 		"not hex":         "alice " + strings.Repeat("z", 64) + "\n",
 		"bad name":        "-alice " + hash + "\n",

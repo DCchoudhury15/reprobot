@@ -1,9 +1,10 @@
 // Package server is the HTTP intake API and the result pages.
 //
-// With Tokens set, every route except /healthz needs an API token. Without
-// them anyone who can reach the address can submit reports and read every
-// result and reporter name, so `reprobot serve` then stays on loopback. See
-// docs/SERVICE.md.
+// With Tokens set, every route except /healthz needs an API token, and a
+// token reads only its own reports and those of the projects it maintains.
+// Without them anyone who can reach the address can submit reports and
+// read every result and reporter name, so `reprobot serve` then stays on
+// loopback. See docs/SERVICE.md.
 package server
 
 import (
@@ -176,10 +177,15 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	var owner string
+	if c := callerFrom(r.Context()); c != nil {
+		owner = c.name
+	}
 	reportID, jobID, created, err := s.Store.CreateReport(r.Context(), store.ReportInput{
 		ID:             id,
 		Project:        project,
 		Reporter:       up.reporter,
+		Owner:          owner,
 		IdempotencyKey: key,
 		ReproHash:      up.hash,
 		Dir:            dir,
@@ -417,7 +423,10 @@ type reportView struct {
 	Related []string `json:"related"`
 }
 
-// loadReport returns nil, nil when the id is malformed or unknown.
+// loadReport returns nil, nil when the id is malformed or unknown, or the
+// caller may not read the report: both look the same, so a token cannot
+// probe which ids exist. The duplicate lists hold only reports the caller
+// may read.
 func (s *Server) loadReport(ctx context.Context, rawID string) (*reportView, error) {
 	id, err := uuid.Parse(rawID)
 	if err != nil {
@@ -429,6 +438,16 @@ func (s *Server) loadReport(ctx context.Context, rawID string) (*reportView, err
 	}
 	if err != nil {
 		return nil, err
+	}
+	c := callerFrom(ctx)
+	if !c.canRead(rep.Project, rep.Owner) {
+		return nil, nil
+	}
+	// Every report in the lists is of rep.Project. A caller who cannot read
+	// that whole project sees only its own reports there.
+	var onlyOwner *string
+	if !c.canRead(rep.Project, "") {
+		onlyOwner = &c.name
 	}
 	v := &reportView{
 		ReportID:    rep.ID.String(),
@@ -445,7 +464,7 @@ func (s *Server) loadReport(ctx context.Context, rawID string) (*reportView, err
 		Duplicates:  []string{},
 		Related:     []string{},
 	}
-	dups, related, err := s.Store.Duplicates(ctx, rep.Project, rep.Signature, rep.Site, rep.ID)
+	dups, related, err := s.Store.Duplicates(ctx, rep.Project, rep.Signature, rep.Site, rep.ID, onlyOwner)
 	if err != nil {
 		return nil, err
 	}

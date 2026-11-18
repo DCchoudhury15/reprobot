@@ -78,14 +78,16 @@ type ReportInput struct {
 	ID             uuid.UUID // uuid.Nil lets the database pick one
 	Project        string
 	Reporter       string // optional
-	IdempotencyKey string // optional
+	Owner          string // token that submitted it; optional
+	IdempotencyKey string // optional, unique per Owner
 	ReproHash      string // optional
 	Dir            string // directory with repro.yaml and the reporter files
 }
 
 // CreateReport stores a report and queues one job for it, in one
 // transaction. If IdempotencyKey is set and a report with that key already
-// exists, it returns the existing ids with created=false and writes nothing.
+// exists for the same Owner, it returns the existing ids with created=false
+// and writes nothing.
 func (s *Store) CreateReport(ctx context.Context, in ReportInput) (reportID uuid.UUID, jobID int64, created bool, err error) {
 	var idArg any
 	if in.ID != uuid.Nil {
@@ -101,18 +103,18 @@ func (s *Store) CreateReport(ctx context.Context, in ReportInput) (reportID uuid
 	// the same time: the second insert waits for the first transaction and
 	// then inserts nothing.
 	err = tx.QueryRow(ctx, `
-		INSERT INTO reports (id, project, reporter, idempotency_key, repro_hash, dir)
-		VALUES (coalesce($1::uuid, gen_random_uuid()), $2, nullif($3, ''), nullif($4, ''), nullif($5, ''), $6)
-		ON CONFLICT (idempotency_key) DO NOTHING
+		INSERT INTO reports (id, project, reporter, idempotency_key, repro_hash, dir, owner)
+		VALUES (coalesce($1::uuid, gen_random_uuid()), $2, nullif($3, ''), nullif($4, ''), nullif($5, ''), $6, nullif($7, ''))
+		ON CONFLICT ((coalesce(owner, '')), idempotency_key) DO NOTHING
 		RETURNING id`,
-		idArg, in.Project, in.Reporter, in.IdempotencyKey, in.ReproHash, in.Dir,
+		idArg, in.Project, in.Reporter, in.IdempotencyKey, in.ReproHash, in.Dir, in.Owner,
 	).Scan(&reportID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		tx.Rollback(ctx)
 		err = s.pool.QueryRow(ctx, `
 			SELECT r.id, j.id FROM reports r JOIN jobs j ON j.report_id = r.id
-			WHERE r.idempotency_key = $1
-			ORDER BY j.id LIMIT 1`, in.IdempotencyKey,
+			WHERE r.idempotency_key = $1 AND coalesce(r.owner, '') = $2
+			ORDER BY j.id LIMIT 1`, in.IdempotencyKey, in.Owner,
 		).Scan(&reportID, &jobID)
 		if err != nil {
 			return uuid.Nil, 0, false, fmt.Errorf("find report by idempotency key: %w", err)
@@ -320,6 +322,7 @@ type Report struct {
 	ID          uuid.UUID
 	Project     string
 	Reporter    string
+	Owner       string // empty when submitted without a token
 	ReproHash   string
 	Dir         string
 	CreatedAt   time.Time
@@ -338,7 +341,7 @@ func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 	r := &Report{}
 	var raw []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT r.id, r.project, coalesce(r.reporter, ''), coalesce(r.repro_hash, ''), r.dir, r.created_at,
+		SELECT r.id, r.project, coalesce(r.reporter, ''), coalesce(r.owner, ''), coalesce(r.repro_hash, ''), r.dir, r.created_at,
 			coalesce(j.id, 0), coalesce(j.state, ''), coalesce(j.attempts, 0), coalesce(j.max_attempts, 0),
 			coalesce(j.last_error, ''), coalesce(res.signature, ''), coalesce(res.site, ''), res.result
 		FROM reports r
@@ -347,7 +350,7 @@ func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 		) j ON true
 		LEFT JOIN results res ON res.report_id = r.id
 		WHERE r.id = $1`, id,
-	).Scan(&r.ID, &r.Project, &r.Reporter, &r.ReproHash, &r.Dir, &r.CreatedAt,
+	).Scan(&r.ID, &r.Project, &r.Reporter, &r.Owner, &r.ReproHash, &r.Dir, &r.CreatedAt,
 		&r.JobID, &r.JobState, &r.Attempts, &r.MaxAttempts,
 		&r.LastError, &r.Signature, &r.Site, &raw)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -372,8 +375,9 @@ const maxDuplicates = 100
 // same crash signature, oldest first, in two lists. dups crash on the same
 // site, or one of the two has no site. related share the signature but
 // crash on a different line: the same call path, maybe a different bug.
-// An empty signature never matches. Each list holds at most maxDuplicates.
-func (s *Store) Duplicates(ctx context.Context, project, signature, site string, excludeReportID uuid.UUID) (dups, related []uuid.UUID, err error) {
+// An empty signature never matches. With onlyOwner set, only reports of
+// that owner count. Each list holds at most maxDuplicates.
+func (s *Store) Duplicates(ctx context.Context, project, signature, site string, excludeReportID uuid.UUID, onlyOwner *string) (dups, related []uuid.UUID, err error) {
 	if signature == "" {
 		return nil, nil, nil
 	}
@@ -387,9 +391,10 @@ func (s *Store) Duplicates(ctx context.Context, project, signature, site string,
 			FROM results res
 			JOIN reports r ON r.id = res.report_id
 			WHERE r.project = $1 AND res.signature = $2 AND res.report_id <> $3
+				AND ($6::text IS NULL OR r.owner = $6)
 		) m
 		WHERE n <= $5
-		ORDER BY n`, project, signature, excludeReportID, site, maxDuplicates)
+		ORDER BY n`, project, signature, excludeReportID, site, maxDuplicates, onlyOwner)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -118,8 +118,8 @@ func TestMigrateConcurrentAndRepeated(t *testing.T) {
 	if err := stores[0].Migrate(ctx); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
-	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 2 {
-		t.Errorf("schema_migrations rows = %d, want 2", n)
+	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 3 {
+		t.Errorf("schema_migrations rows = %d, want 3", n)
 	}
 }
 
@@ -470,7 +470,7 @@ func TestDuplicates(t *testing.T) {
 
 	check := func(project, sig string, exclude uuid.UUID, want ...uuid.UUID) {
 		t.Helper()
-		got, related, err := st.Duplicates(ctx, project, sig, "", exclude)
+		got, related, err := st.Duplicates(ctx, project, sig, "", exclude, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -517,7 +517,7 @@ func TestDuplicatesSplitBySite(t *testing.T) {
 		{"", c, []uuid.UUID{a, b, d}, nil},
 		{"line-3", uuid.Nil, []uuid.UUID{c}, []uuid.UUID{a, b, d}},
 	} {
-		dups, related, err := st.Duplicates(ctx, "p", "sig", tc.site, tc.exclude)
+		dups, related, err := st.Duplicates(ctx, "p", "sig", tc.site, tc.exclude, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -548,7 +548,7 @@ func TestDuplicatesCap(t *testing.T) {
 		finish(t, st, id, siteResult("sig", site))
 		siteOf[id] = site
 	}
-	dups, related, err := st.Duplicates(ctx, "p", "sig", "same", uuid.Nil)
+	dups, related, err := st.Duplicates(ctx, "p", "sig", "same", uuid.Nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
