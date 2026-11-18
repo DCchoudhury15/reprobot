@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 520" width="1280" height="520" role="img" aria-label="reprobot run output: REPRODUCED_AS_CLAIMED, crashed in 3 of 3 runs">
+  <rect width="1280" height="520" rx="22" fill="#0a1114"/>
+  <rect width="1280" height="52" rx="22" fill="#111b1f"/>
+  <rect y="30" width="1280" height="22" fill="#111b1f"/>
+  <circle cx="34" cy="26" r="8" fill="#e0563f"/><circle cx="60" cy="26" r="8" fill="#c8a45c"/><circle cx="86" cy="26" r="8" fill="#4fb58d"/>
+  <text x="640" y="32" text-anchor="middle" font-family="'Hanken Grotesk', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="17" fill="#56676a">reprobot run</text>
+  <g xml:space="preserve" font-family="'Martian Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="22">
+    <text x="44" y="108"><tspan fill="#4fb58d">$</tspan><tspan fill="#efe7d6"> reprobot run --project project.yaml repro.yaml</tspan></text>
+    <text x="44" y="164"><tspan fill="#56676a">state:</tspan><tspan x="200" fill="#e0563f" font-weight="700">REPRODUCED_AS_CLAIMED</tspan></text>
+    <text x="44" y="200"><tspan fill="#56676a">reason:</tspan><tspan x="200" fill="#efe7d6">crashed in 3 of 3 runs, as claimed</tspan></text>
+    <text x="44" y="256"><tspan fill="#56676a">crash:</tspan><tspan x="200" fill="#c8a45c">address heap-buffer-overflow</tspan><tspan fill="#efe7d6">, WRITE of size 64</tspan></text>
+    <text x="44" y="292" fill="#56676a">frames:</text>
+    <text x="44" y="328"><tspan x="72" fill="#56676a">#1 </tspan><tspan fill="#6aa3cf">parse_header</tspan><tspan fill="#8b9b9d"> /src/tinyparse.c:21</tspan></text>
+    <text x="44" y="364"><tspan x="72" fill="#56676a">#2 </tspan><tspan fill="#6aa3cf">parse_file</tspan><tspan fill="#8b9b9d"> /src/tinyparse.c:35</tspan></text>
+    <text x="44" y="400"><tspan x="72" fill="#56676a">#3 </tspan><tspan fill="#6aa3cf">main</tspan><tspan fill="#8b9b9d"> /src/tinyparse.c:46</tspan></text>
+    <text x="44" y="436"><tspan fill="#56676a">signature:</tspan><tspan x="200" fill="#a391dd">d3c66c5eb2dafff2</tspan></text>
+  </g>
+  <g font-family="'Martian Mono', Menlo, Consolas, monospace" font-size="15" font-weight="700">
+    <circle cx="1088" cy="164" r="13" fill="#e0563f"/><circle cx="1124" cy="164" r="13" fill="#e0563f"/><circle cx="1160" cy="164" r="13" fill="#e0563f"/>
+    <text x="1124" y="204" text-anchor="middle" fill="#56676a">3 runs</text>
+  </g>
+  <text x="44" y="488" font-family="'Hanken Grotesk', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" fill="#8b9b9d">Same report on the fix commit:  <tspan fill="#4fb58d" font-family="'Martian Mono', Menlo, Consolas, monospace" font-weight="700">NOT_REPRODUCED</tspan></text>
+</svg>
