@@ -76,10 +76,14 @@ func startHelper(ctx context.Context, cacheDir string, servers []spec.Server, po
 		"-spec", "/files/.reprobot-servers.json",
 		"-files", "/files",
 	}
+	h := &helper{name: name}
 	if _, err := dockerCmd(ctx, args...); err != nil {
+		// The daemon may have made the container anyway, for example when
+		// ctx ended during create. rm -f of a name that does not exist
+		// only returns an error.
+		h.cleanup(ctx)
 		return nil, fmt.Errorf("helper: create: %w", err)
 	}
-	h := &helper{name: name}
 
 	// Start the container and wait for READY on stdout.
 	cmd := exec.CommandContext(ctx, "docker", "start", "-a", name)

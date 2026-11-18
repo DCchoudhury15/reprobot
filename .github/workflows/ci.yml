@@ -33,5 +33,6 @@ jobs:
         run: go test -count=1 -tags e2e ./internal/runner/
       - name: No containers left behind
         run: |
-          test -z "$(docker ps -aq --filter label=reprobot=1)"
-          test -z "$(docker ps -aq --filter label=reprobot-test=1)"
+          left=$(docker ps -a --filter label=reprobot=1 --format '{{.Names}} {{.Image}} {{.Status}}'
+                 docker ps -a --filter label=reprobot-test=1 --format '{{.Names}} {{.Image}} {{.Status}}')
+          if [ -n "$left" ]; then echo "$left"; exit 1; fi
