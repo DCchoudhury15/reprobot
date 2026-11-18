@@ -50,6 +50,7 @@ pre { background: #f4f4f4; padding: .5rem; overflow-x: auto; white-space: pre-wr
 <tr><th>Commit</th><td><code>{{.Inputs.Commit}}</code></td></tr>
 <tr><th>Profile</th><td>{{.Inputs.Profile}}</td></tr>
 </table>
+{{if $.Signed}}<p><a href="/v1/reports/{{$.ReportID}}/signed">Signed result</a>, check it with <code>reprobot verify --key signing.pub</code> and the key at <a href="/v1/signing-key">/v1/signing-key</a>.</p>{{end}}
 {{else}}
 <p>No result yet.</p>
 {{end}}

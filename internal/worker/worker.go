@@ -3,6 +3,8 @@ package worker
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/DCchoudhury15/reprobot/internal/result"
 	"github.com/DCchoudhury15/reprobot/internal/runner"
+	"github.com/DCchoudhury15/reprobot/internal/sign"
 	"github.com/DCchoudhury15/reprobot/internal/store"
 )
 
@@ -42,6 +45,10 @@ type Worker struct {
 	Lease        time.Duration // default DefaultLease
 	PollInterval time.Duration // wait when the queue is empty; default DefaultPollInterval
 	ID           string        // lease owner prefix; default hostname-pid
+	// SignKey, when set, signs every result; the envelope is stored with
+	// it. Results are signed with their report id set, so a signed verdict
+	// names the report it is for.
+	SignKey ed25519.PrivateKey
 }
 
 // Serve runs the loops until ctx is cancelled and all of them have
@@ -143,11 +150,27 @@ func (w *Worker) process(ctx context.Context, owner string, job *store.Job) {
 		err = w.Store.Fail(sctx, job.ID, owner, "runner returned no result")
 	default:
 		log.Info("job done", "state", res.State)
-		err = w.Store.Complete(sctx, job.ID, owner, res)
+		res.ReportID = job.ReportID.String()
+		var env []byte
+		if env, err = w.envelope(res); err == nil {
+			err = w.Store.CompleteSigned(sctx, job.ID, owner, res, env)
+		}
 	}
 	if err != nil {
 		log.Error("store job outcome", "err", err)
 	}
+}
+
+// envelope returns the signed result, or nil without a SignKey.
+func (w *Worker) envelope(res *result.Result) ([]byte, error) {
+	if w.SignKey == nil {
+		return nil, nil
+	}
+	payload, err := json.Marshal(res)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(sign.Sign(w.SignKey, payload))
 }
 
 // heartbeat extends the lease every Lease/3 until ctx ends. When the lease

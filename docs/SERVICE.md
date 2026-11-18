@@ -63,6 +63,7 @@ reprobot serve \
   --data /var/lib/reprobot \
   --projects /etc/reprobot/projects \
   --tokens /etc/reprobot/tokens \
+  --sign-pub /etc/reprobot/signing.pub \
   --addr 127.0.0.1:8080
 
 reprobot worker \
@@ -71,7 +72,8 @@ reprobot worker \
   --projects /etc/reprobot/projects \
   --cache /var/cache/reprobot \
   --concurrency 2 \
-  --lease 5m
+  --lease 5m \
+  --sign-key /etc/reprobot/signing.key
 ```
 
 - `--projects` holds one `<project>.yaml` per project. The file name is the
@@ -104,7 +106,7 @@ reprobot worker \
 - Only the `project` field of `repro.yaml` is checked here: it must name a
   file in `--projects`. The worker validates the rest.
 - Success is `202` with `{"report_id", "job_id", "status_url"}`. Errors are
-  `{"error": "..."}` with status `400`, `401`, `413` or `500`.
+  `{"error": "..."}` with status `400`, `401`, `413`, `429` or `500`.
 
 ```sh
 curl -H "Authorization: Bearer $REPROBOT_TOKEN" \
@@ -125,7 +127,34 @@ missing when `repro.yaml` is not valid; the result then says why.
 
 `GET /reports/{id}` is the same as an HTML page, with no JavaScript.
 
+`GET /v1/reports/{id}/signed` returns the signed result (see Signed results
+below), with the same access rules as the report. It is `404` when the
+report has no signed result. The report JSON has `"signed": true` when it
+has one.
+
+`GET /v1/signing-key` returns the public key from `--sign-pub` as PEM. It
+needs no token, and is `404` when no key is set.
+
 `GET /healthz` returns `ok`, or `503` when the database does not answer.
+
+## Signed results
+
+Make a key with `reprobot keygen /etc/reprobot` and start every worker with
+`--sign-key /etc/reprobot/signing.key`. Each result is then signed when its
+job finishes, with the report id set in the result, so a signed verdict
+names the report it is for. The envelope is stored exactly as signed (in a
+`text` column, since `jsonb` would rewrite it). Give `serve` the public key
+with `--sign-pub` to publish it.
+
+Anyone can then check a result; fetching the key needs no token:
+
+```sh
+curl -s http://127.0.0.1:8080/v1/signing-key > signing.pub
+curl -s -H "Authorization: Bearer $REPROBOT_TOKEN" \
+  http://127.0.0.1:8080/v1/reports/$ID/signed | reprobot verify --key signing.pub -
+```
+
+Results finished before the worker had a key are not signed afterwards.
 
 ## Jobs
 

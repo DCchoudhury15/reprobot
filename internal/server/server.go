@@ -58,6 +58,9 @@ type Server struct {
 	// ReportsPerHour caps the reports one token may send in any hour; 0
 	// means no limit. Without Tokens there is no limit.
 	ReportsPerHour int
+	// SigningKeyPEM is the public key the workers sign results with,
+	// served at /v1/signing-key. nil means none is published.
+	SigningKeyPEM []byte
 }
 
 // Handler returns the HTTP handler with all routes.
@@ -71,7 +74,9 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("POST /v1/reports", protect(s.createReport))
 	mux.Handle("GET /v1/reports/{id}", protect(s.reportJSON))
+	mux.Handle("GET /v1/reports/{id}/signed", protect(s.reportSigned))
 	mux.Handle("GET /reports/{id}", protect(s.reportPage))
+	mux.HandleFunc("GET /v1/signing-key", s.signingKey)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	return mux
 }
@@ -441,6 +446,9 @@ type reportView struct {
 	Duplicates  []string       `json:"duplicates"`
 	// Related reports share the signature but crash on another line.
 	Related []string `json:"related"`
+	// Signed is true when a signed result is at /v1/reports/{id}/signed.
+	Signed   bool   `json:"signed"`
+	envelope []byte // the signed result, byte for byte
 }
 
 // loadReport returns nil, nil when the id is malformed or unknown, or the
@@ -483,6 +491,8 @@ func (s *Server) loadReport(ctx context.Context, rawID string) (*reportView, err
 		Result:      rep.Result,
 		Duplicates:  []string{},
 		Related:     []string{},
+		Signed:      rep.Envelope != nil,
+		envelope:    rep.Envelope,
 	}
 	dups, related, err := s.Store.Duplicates(ctx, rep.Project, rep.Signature, rep.Site, rep.ID, onlyOwner)
 	if err != nil {
@@ -508,6 +518,38 @@ func (s *Server) reportJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
+}
+
+// reportSigned serves the signed result exactly as the worker signed it.
+func (s *Server) reportSigned(w http.ResponseWriter, r *http.Request) {
+	v, err := s.loadReport(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if v == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "report not found"})
+		return
+	}
+	if v.envelope == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this report has no signed result"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(v.envelope)
+}
+
+// signingKey serves the public key results are signed with. It is public,
+// so it needs no token.
+func (s *Server) signingKey(w http.ResponseWriter, r *http.Request) {
+	if s.SigningKeyPEM == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this server publishes no signing key"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(s.SigningKeyPEM)
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {

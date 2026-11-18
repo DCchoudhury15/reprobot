@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/DCchoudhury15/reprobot/internal/runner"
 	"github.com/DCchoudhury15/reprobot/internal/server"
+	"github.com/DCchoudhury15/reprobot/internal/sign"
 	"github.com/DCchoudhury15/reprobot/internal/store"
 	"github.com/DCchoudhury15/reprobot/internal/worker"
 )
@@ -71,6 +73,7 @@ func serveCmd(args []string) int {
 	addr := fs.String("addr", "127.0.0.1:8080", "listen address")
 	tokensPath := fs.String("tokens", "", "tokens file (see `reprobot token`); without it the API is open and only a loopback --addr is allowed")
 	perHour := fs.Int("reports-per-hour", 20, "most reports one token may send in any hour; 0 means no limit (needs --tokens)")
+	signPub := fs.String("sign-pub", "", "public key of the workers' --sign-key, served at /v1/signing-key")
 	noAuth := fs.Bool("insecure-no-auth", false, "allow a non-loopback --addr without --tokens, for use behind a proxy that authenticates users")
 	if code := parseFlags(fs, args, "db", "data", "projects"); code >= 0 {
 		return code
@@ -81,6 +84,16 @@ func serveCmd(args []string) int {
 	}
 	if *perHour < 0 {
 		return fail(fmt.Errorf("--reports-per-hour must be 0 or more"))
+	}
+	var pubPEM []byte
+	if *signPub != "" {
+		if _, err := sign.LoadPublicKey(*signPub); err != nil {
+			return fail(err)
+		}
+		var err error
+		if pubPEM, err = os.ReadFile(*signPub); err != nil {
+			return fail(err)
+		}
 	}
 	if err := checkAuthConfig(*addr, *tokensPath, *noAuth); err != nil {
 		return fail(err)
@@ -107,7 +120,7 @@ func serveCmd(args []string) int {
 	}
 	defer st.Close()
 
-	srv := &server.Server{Store: st, DataDir: *dataDir, ProjectsDir: *projectsDir, Tokens: tokens, ReportsPerHour: *perHour}
+	srv := &server.Server{Store: st, DataDir: *dataDir, ProjectsDir: *projectsDir, Tokens: tokens, ReportsPerHour: *perHour, SigningKeyPEM: pubPEM}
 	hs := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -151,6 +164,7 @@ func workerCmd(args []string) int {
 	concurrency := fs.Int("concurrency", 2, "jobs to run at the same time")
 	lease := fs.Duration("lease", worker.DefaultLease, "job lease; renewed every lease/3 while a job runs")
 	poll := fs.Duration("poll", worker.DefaultPollInterval, "wait between checks when the queue is empty")
+	signKey := fs.String("sign-key", "", "sign every result with this key (see reprobot keygen)")
 	if code := parseFlags(fs, args, "db", "data", "projects"); code >= 0 {
 		return code
 	}
@@ -165,6 +179,13 @@ func workerCmd(args []string) int {
 	}
 	if err := checkDir(*projectsDir); err != nil {
 		return fail(err)
+	}
+	var key ed25519.PrivateKey
+	if *signKey != "" {
+		var err error
+		if key, err = sign.LoadPrivateKey(*signKey); err != nil {
+			return fail(err)
+		}
 	}
 	if *cacheDir == "" {
 		*cacheDir = filepath.Join(*dataDir, "cache")
@@ -197,6 +218,7 @@ func workerCmd(args []string) int {
 		Concurrency:  *concurrency,
 		Lease:        *lease,
 		PollInterval: *poll,
+		SignKey:      key,
 	}
 	slog.Info("worker started", "concurrency", *concurrency, "lease", *lease)
 	if err := w.Serve(ctx); err != nil {

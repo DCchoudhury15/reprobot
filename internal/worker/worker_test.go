@@ -2,6 +2,9 @@ package worker_test
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/DCchoudhury15/reprobot/internal/result"
 	"github.com/DCchoudhury15/reprobot/internal/runner"
+	"github.com/DCchoudhury15/reprobot/internal/sign"
 	"github.com/DCchoudhury15/reprobot/internal/store"
 	"github.com/DCchoudhury15/reprobot/internal/store/storetest"
 	"github.com/DCchoudhury15/reprobot/internal/worker"
@@ -273,5 +277,59 @@ func TestWorkerLeaseLostCancelsRun(t *testing.T) {
 	rep := getReport(t, st, id)
 	if rep.JobState != store.JobRunning || rep.Result != nil || rep.LastError != "" {
 		t.Errorf("job after lease loss: state %s last_error %q result %+v", rep.JobState, rep.LastError, rep.Result)
+	}
+}
+
+func TestWorkerSignsResults(t *testing.T) {
+	st := storetest.New(t)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The NUL byte is rewritten in the stored jsonb result, so this also
+	// checks that the envelope is kept byte for byte, apart from it.
+	run := func(ctx context.Context, o runner.Options) (*result.Result, error) {
+		return &result.Result{State: result.ReproducedAsClaimed, Runs: []result.RunOutcome{{Report: "bad\x00byte"}}}, nil
+	}
+	newWorker := func(key ed25519.PrivateKey) *worker.Worker {
+		return &worker.Worker{Store: st, Run: run, ProjectsDir: "/p", CacheDir: "/c",
+			Lease: 10 * time.Second, PollInterval: 20 * time.Millisecond, SignKey: key}
+	}
+	finished := func(id uuid.UUID) *store.Report {
+		t.Helper()
+		waitFor(t, 10*time.Second, "job done", func() bool { return getReport(t, st, id).JobState == store.JobDone })
+		return getReport(t, st, id)
+	}
+
+	signed := newReport(t, st, "p", "/d/1")
+	stop := start(t, newWorker(priv))
+	rep := finished(signed)
+	stop()
+	if rep.Envelope == nil {
+		t.Fatal("no envelope stored")
+	}
+	env, err := sign.Decode(rep.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := sign.Verify(env, pub)
+	if err != nil {
+		t.Fatalf("stored envelope does not verify: %v", err)
+	}
+	var got result.Result
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ReportID != signed.String() || got.State != result.ReproducedAsClaimed || got.Runs[0].Report != "bad\x00byte" {
+		t.Errorf("signed payload: report %q state %s run report %q", got.ReportID, got.State, got.Runs[0].Report)
+	}
+	if rep.Result.ReportID != signed.String() {
+		t.Errorf("stored result report_id %q", rep.Result.ReportID)
+	}
+
+	unsigned := newReport(t, st, "p", "/d/2")
+	start(t, newWorker(nil))
+	if rep := finished(unsigned); rep.Envelope != nil {
+		t.Errorf("worker without a key stored an envelope: %s", rep.Envelope)
 	}
 }

@@ -74,6 +74,9 @@ type Inputs struct {
 
 // Result is the full verdict.
 type Result struct {
+	// ReportID is the service report this result is for; empty from the
+	// CLI. It is set before signing, so a signed verdict names its report.
+	ReportID      string       `json:"report_id,omitempty"`
 	State         State        `json:"state"`
 	Reason        string       `json:"reason"`
 	Inputs        Inputs       `json:"inputs"`

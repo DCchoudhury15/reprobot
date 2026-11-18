@@ -166,7 +166,9 @@ reprobot verify --key signing.pub result.dsse.json
 ```
 
 The file is a standard [DSSE](https://github.com/secure-systems-lab/dsse)
-envelope signed with Ed25519, so other DSSE tools can check it too.
+envelope signed with Ed25519, so other DSSE tools can check it too. Workers
+can sign every result the service produces, see
+[docs/SERVICE.md](docs/SERVICE.md#signed-results).
 
 ## Status
 
@@ -174,10 +176,10 @@ Early.
 
 Working: the CLI, sandboxed builds and runs, ASan and UBSan, crash signatures
 and crash lines, the static claim check, loopback test servers, the service
-with tokens, per-token access and rate limits, and signed results from the CLI.
+with tokens, per-token access and rate limits, and signed results.
 
-Not yet: signed results from the service, OSS-Fuzz project import, a GitHub
-App for private vulnerability reports, and gVisor as the default sandbox.
+Not yet: OSS-Fuzz project import, a GitHub App for private vulnerability
+reports, and gVisor as the default sandbox.
 
 ## Development
 

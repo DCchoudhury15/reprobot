@@ -285,6 +285,12 @@ func (s *Store) Heartbeat(ctx context.Context, jobID int64, workerID string, lea
 // It returns ErrLeaseLost and writes nothing if workerID does not hold the
 // lease.
 func (s *Store) Complete(ctx context.Context, jobID int64, workerID string, res *result.Result) error {
+	return s.CompleteSigned(ctx, jobID, workerID, res, nil)
+}
+
+// CompleteSigned is Complete that also stores envelope, the signed result,
+// byte for byte. A nil envelope stores none.
+func (s *Store) CompleteSigned(ctx context.Context, jobID int64, workerID string, res *result.Result, envelope []byte) error {
 	if res == nil {
 		return errors.New("store: nil result")
 	}
@@ -315,9 +321,9 @@ func (s *Store) Complete(ctx context.Context, jobID int64, workerID string, res 
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO results (report_id, state, signature, site, result)
-		VALUES ($1, $2, nullif($3, ''), nullif($4, ''), $5)`,
-		reportID, string(res.State), cleanText(signature), cleanText(site), json.RawMessage(jsonbSafe(data)),
+		INSERT INTO results (report_id, state, signature, site, result, envelope)
+		VALUES ($1, $2, nullif($3, ''), nullif($4, ''), $5, $6)`,
+		reportID, string(res.State), cleanText(signature), cleanText(site), json.RawMessage(jsonbSafe(data)), envelopeArg(envelope),
 	); err != nil {
 		return err
 	}
@@ -399,16 +405,18 @@ type Report struct {
 	Signature   string
 	Site        string
 	Result      *result.Result // nil until the job is done
+	Envelope    []byte         // the signed result; nil when not signed
 }
 
 // GetReport returns one report. It returns ErrNotFound if there is none.
 func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 	r := &Report{}
 	var raw []byte
+	var env *string
 	err := s.pool.QueryRow(ctx, `
 		SELECT r.id, r.project, coalesce(r.reporter, ''), coalesce(r.owner, ''), coalesce(r.repro_hash, ''), r.dir, r.created_at,
 			coalesce(j.id, 0), coalesce(j.state, ''), coalesce(j.attempts, 0), coalesce(j.max_attempts, 0),
-			coalesce(j.last_error, ''), coalesce(res.signature, ''), coalesce(res.site, ''), res.result
+			coalesce(j.last_error, ''), coalesce(res.signature, ''), coalesce(res.site, ''), res.result, res.envelope
 		FROM reports r
 		LEFT JOIN LATERAL (
 			SELECT * FROM jobs WHERE jobs.report_id = r.id ORDER BY jobs.id DESC LIMIT 1
@@ -417,12 +425,15 @@ func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 		WHERE r.id = $1`, id,
 	).Scan(&r.ID, &r.Project, &r.Reporter, &r.Owner, &r.ReproHash, &r.Dir, &r.CreatedAt,
 		&r.JobID, &r.JobState, &r.Attempts, &r.MaxAttempts,
-		&r.LastError, &r.Signature, &r.Site, &raw)
+		&r.LastError, &r.Signature, &r.Site, &raw, &env)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if env != nil {
+		r.Envelope = []byte(*env)
 	}
 	if raw != nil {
 		r.Result = &result.Result{}
@@ -494,6 +505,13 @@ func truncate(s string, n int) string {
 		n--
 	}
 	return s[:n]
+}
+
+func envelopeArg(env []byte) any {
+	if env == nil {
+		return nil
+	}
+	return string(env)
 }
 
 // jsonbSafe replaces the escape \u0000 in encoded JSON with �, because

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -210,5 +211,61 @@ func TestReportsPerHour(t *testing.T) {
 	// The limit is per token.
 	if code, _, out := post("bob", "", nil, ""); code != http.StatusAccepted {
 		t.Errorf("bob: %d %s", code, out)
+	}
+}
+
+func TestSignedResult(t *testing.T) {
+	tokens, secret := tokensFile(t, "alice", "bob")
+	pubPEM := []byte("-----BEGIN PUBLIC KEY-----\nexample\n-----END PUBLIC KEY-----\n")
+	e := newEnvWith(t, func(s *server.Server) { s.Tokens = tokens; s.SigningKeyPEM = pubPEM })
+	ctx := context.Background()
+	complete := func(env []byte) string {
+		t.Helper()
+		id, _, _, err := e.st.CreateReport(ctx, store.ReportInput{Project: "tinyparse", Owner: "alice", Dir: "/d"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		job, err := e.st.Claim(ctx, "w", time.Minute)
+		if err != nil || job == nil {
+			t.Fatalf("Claim = %+v, %v", job, err)
+		}
+		if err := e.st.CompleteSigned(ctx, job.ID, "w", &result.Result{State: result.NotReproduced}, env); err != nil {
+			t.Fatal(err)
+		}
+		return id.String()
+	}
+	// Odd spacing and key order: the server must return these bytes as
+	// they are, not a re-encoding.
+	env := []byte(`{"signatures":[],  "payloadType":"x","payload":"e30="}`)
+	signed, unsigned := complete(env), complete(nil)
+
+	code, out := e.getAs(t, secret["alice"], "/v1/reports/"+signed+"/signed")
+	if code != http.StatusOK || string(out) != string(env) {
+		t.Errorf("signed: %d %s", code, out)
+	}
+	if code, out := e.getAs(t, secret["bob"], "/v1/reports/"+signed+"/signed"); code != http.StatusNotFound || strings.Contains(string(out), "payload") {
+		t.Errorf("bob reads alice's signed result: %d %s", code, out)
+	}
+	if code, out := e.getAs(t, secret["alice"], "/v1/reports/"+unsigned+"/signed"); code != http.StatusNotFound || !strings.Contains(string(out), "no signed result") {
+		t.Errorf("unsigned: %d %s", code, out)
+	}
+	for id, want := range map[string]bool{signed: true, unsigned: false} {
+		_, out := e.getAs(t, secret["alice"], "/v1/reports/"+id)
+		if v := decode[struct{ Signed bool }](t, out); v.Signed != want {
+			t.Errorf("%s: signed = %v, want %v", id, v.Signed, want)
+		}
+		_, page := e.getAs(t, secret["alice"], "/reports/"+id)
+		if has := strings.Contains(string(page), `/v1/reports/`+id+`/signed`); has != want {
+			t.Errorf("%s: page links the signed result = %v, want %v", id, has, want)
+		}
+	}
+
+	// The public key needs no token.
+	resp, out := e.get(t, "/v1/signing-key")
+	if resp.StatusCode != http.StatusOK || string(out) != string(pubPEM) {
+		t.Errorf("signing key: %d %s", resp.StatusCode, out)
+	}
+	if resp, _ := newEnv(t).get(t, "/v1/signing-key"); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("signing key with none set: %d", resp.StatusCode)
 	}
 }
