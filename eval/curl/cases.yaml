@@ -9,4 +9,6 @@ real:
     id: CVE-2023-38545
     fix: fb4415d8aee6c1045be932a34fe6107c2f5ed147
     input: SOCKS5 protocol data derived from upstream test728 and the CVE advisory
-false: []
+false:
+  - dir: false-short-hostname
+    about: the CVE-2023-38545 redirect with a 200 byte hostname, claims the same overflow

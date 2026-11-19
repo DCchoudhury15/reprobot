@@ -73,5 +73,21 @@ The three false reports were also written for this evaluation:
 - One project, five bugs, all found through the `xmllint` program.
 - The false reports are written by hand. They are not real reports received
   by a project.
-- Bugs that need a network peer (for example most curl bugs) cannot be tested
-  yet.
+- Bugs that need a network peer use scripted loopback servers
+  (`run.servers`). The curl case below is the first one, and it does not
+  pass yet.
+
+## curl (not passing yet)
+
+`curl/` checks CVE-2023-38545, the SOCKS5 hostname overflow, with a scripted
+SOCKS5 proxy on loopback. The build works on both commits, and a report about
+a 200 byte hostname correctly gives `NOT_REPRODUCED`. But the CVE report
+itself also gives `NOT_REPRODUCED` on the vulnerable commit, so `TestCurl`
+fails and there is no `RESULTS.md` for curl.
+
+The likely reason, from the curl advisory: the overflow needs a slow SOCKS5
+handshake and a hostname longer than curl's download buffer (about 100 KB in
+the curl tool unless `--limit-rate` makes it smaller). The current input
+sends a 260 byte hostname in one step. The next step is to use curl's own
+regression test for this CVE as the input.
+

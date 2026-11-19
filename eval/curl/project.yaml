@@ -11,7 +11,7 @@ profiles:
       --without-nghttp2 --without-libidn2 --without-librtmp
       CFLAGS="-fsanitize=address -g -O1 -fno-omit-frame-pointer"
       LDFLAGS="-fsanitize=address"
-      && make -j2 src/curl
+      && make -j2 -C lib && make -j2 -C src
     outputs: [src/curl]
     env:
       ASAN_OPTIONS: detect_leaks=0:symbolize=1

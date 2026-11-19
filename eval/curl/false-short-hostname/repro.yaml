@@ -1,0 +1,37 @@
+version: 1
+project: curl
+# Last vulnerable commit: parent of the fix fb4415d8aee6c1045be932a34fe6107c2f5ed147
+commit: 09e25b9d94f4106eac8ca3a43b221bdc66f405e4
+profile: asan
+run:
+  cmd: ["bin/curl", "--no-progress-meter", "--location", "--proxy", "socks5h://127.0.0.1:1080", "http://127.0.0.1:1080/test"]
+  timeout_seconds: 30
+  repeat: 3
+  servers:
+    - port: 1080
+      steps:
+        # SOCKS5 greeting: client sends version + auth methods
+        - read: any
+        # Reply: version 5, no auth needed
+        - send: socks_auth.bin
+        # SOCKS5 connect request: client asks to connect to the target
+        - read: any
+        # Reply: success, dummy IPv4 address
+        - send: socks_ok.bin
+        # HTTP request through the SOCKS "tunnel"
+        - read: headers
+        # HTTP redirect to a 256-byte hostname (triggers the overflow on
+        # the second SOCKS connection when curl follows the redirect)
+        - send: redirect.bin
+files:
+  - socks_auth.bin
+  - socks_ok.bin
+  - redirect.bin
+claim:
+  sanitizer: address
+  kind: heap-buffer-overflow
+  frame: Curl_SOCKS5
+  text: |
+    Written for this evaluation, not a real bug. The same SOCKS5 redirect as
+    CVE-2023-38545, but to a 200 byte hostname, which fits the 255 byte
+    limit. It claims the same heap overflow anyway.
