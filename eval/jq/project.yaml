@@ -1,0 +1,20 @@
+version: 1
+id: jq
+repo: https://github.com/jqlang/jq.git
+image: gcc:15
+profiles:
+  asan:
+    build: >-
+      autoreconf -i
+      && ./configure --disable-shared --disable-docs --disable-maintainer-mode
+      --with-oniguruma=no
+      CFLAGS="-std=gnu17 -fsanitize=address -g -O1 -fno-omit-frame-pointer"
+      LDFLAGS="-fsanitize=address"
+      && make -j2
+    outputs: [jq]
+    env:
+      ASAN_OPTIONS: detect_leaks=0:symbolize=1
+limits:
+  cpus: 2
+  memory_mb: 2048
+  build_timeout_seconds: 900

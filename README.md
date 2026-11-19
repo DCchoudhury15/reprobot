@@ -116,21 +116,23 @@ and `file:line` references the report names, in the code at that commit.
 
 ## Tested on real CVEs
 
-Each report is run on the last vulnerable commit, then again on the fix
-commit. Only the commit changes.
+Seven fixed CVEs in libxml2 and jq. Each report is run on the last
+vulnerable commit, then again on the fix commit. Only the commit changes.
 
-| Bug | Crash | Vulnerable commit | Fix commit |
-|---|---|---|---|
-| CVE-2025-49794 | heap-use-after-free | 🔴 reproduced | 🟢 gone |
-| CVE-2025-49795 | SEGV | 🔴 reproduced | 🟢 gone |
-| CVE-2025-49796 | SEGV | 🔴 reproduced | 🟢 gone |
-| CVE-2025-24928 | stack-buffer-overflow | 🔴 reproduced | 🟢 gone |
-| CVE-2023-28484 | SEGV | 🔴 reproduced | 🟢 gone |
+| Project | Bug | Crash | Vulnerable commit | Fix commit |
+|---|---|---|---|---|
+| libxml2 | CVE-2025-49794 | heap-use-after-free | 🔴 reproduced | 🟢 gone |
+| libxml2 | CVE-2025-49795 | SEGV | 🔴 reproduced | 🟢 gone |
+| libxml2 | CVE-2025-49796 | SEGV | 🔴 reproduced | 🟢 gone |
+| libxml2 | CVE-2025-24928 | stack-buffer-overflow | 🔴 reproduced | 🟢 gone |
+| libxml2 | CVE-2023-28484 | SEGV | 🔴 reproduced | 🟢 gone |
+| jq | CVE-2023-50246 | heap-buffer-overflow | 🔴 reproduced | 🟢 gone |
+| jq | CVE-2023-50268 | stack-buffer-overflow | 🔴 reproduced | 🟢 gone |
 
-Three fake reports, including a pasted sanitizer report that `xmllint` echoes
+Five fake reports, including a pasted sanitizer report that `xmllint` echoes
 back on stderr, all give 🟢 `NOT_REPRODUCED`. A build takes about 30 seconds
 and a check on a cached build 1 to 2 seconds.
-[Full results](eval/libxml2/RESULTS.md) · [how the eval works](eval/README.md)
+Full results: [libxml2](eval/libxml2/RESULTS.md), [jq](eval/jq/RESULTS.md) · [how the eval works](eval/README.md)
 
 ## Quick start
 

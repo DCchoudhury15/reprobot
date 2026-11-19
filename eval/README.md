@@ -47,6 +47,31 @@ The three false reports were also written for this evaluation:
   line in its error message, so the report text appears on stderr. reprobot
   does not read crashes from stderr, so this does not count.
 
+## jq
+
+Results: [jq/RESULTS.md](jq/RESULTS.md). Two CVEs from the jq 1.7.1 security
+release, both reproduced on the vulnerable commit and both gone on the fix
+commit. Two false reports, none reproduced. Each input is the regression test
+the jq maintainers added to `tests/shtest` in the fix commit:
+
+- CVE-2023-50246: `jq .` on the number `-10E-1000000001` overflows a heap
+  buffer while printing it.
+- CVE-2023-50268: `jq '1 != .'` on `Nan4000` (a NaN with a large payload)
+  overflows a stack buffer while comparing.
+
+Both crashes happen in the decNumber library that jq bundles
+(`decToString`, `decNumberCopy`); the jq functions named in the reports are
+their callers in the top frames, so the claims match. The vulnerable commit
+of CVE-2023-50246 is the fix commit of CVE-2023-50268, so the two cases do
+not mix.
+
+Two build notes: jq from 2023 needs `-std=gnu17`, because GCC 15 defaults
+to C23, where `f()` means `f(void)`; and it needs a full `make`, because
+`make jq` skips generated sources such as `src/builtin.inc`.
+
+jq also fixed many memory bugs in 2026, but those fixes add no input-level
+regression tests, so they are not used here.
+
 ## What this found
 
 - CVE-2025-49795 and CVE-2025-49796 are two different bugs, but both are a
@@ -70,7 +95,8 @@ The three false reports were also written for this evaluation:
 
 ## Limits
 
-- One project, five bugs, all found through the `xmllint` program.
+- Two projects, seven bugs, all through one command line program each
+  (`xmllint` and `jq`).
 - The false reports are written by hand. They are not real reports received
   by a project.
 - Bugs that need a network peer use scripted loopback servers

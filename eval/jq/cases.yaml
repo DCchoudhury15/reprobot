@@ -1,0 +1,22 @@
+# Evaluation cases for jq. Each dir holds a repro.yaml and its files.
+#
+# real: the repro.yaml names the last vulnerable commit (the parent of the
+# fix). The same report is then run again on the fix commit and must not
+# crash there.
+# false: reports about bugs that do not exist, written for this evaluation.
+project: project.yaml
+real:
+  - dir: cve-2023-50246
+    id: CVE-2023-50246
+    fix: 71c2ab509a8628dbbad4bc7b3f98a64aa90d3297
+    input: the regression test added to tests/shtest in the fix commit
+  - dir: cve-2023-50268
+    id: CVE-2023-50268
+    fix: c9a51565214eece8f1053089739aea73145bfd6b
+    input: the regression test added to tests/shtest in the fix commit
+false:
+  - dir: false-small-exponent
+    about: a harmless number, claims the CVE-2023-50246 heap overflow
+  - dir: false-made-up-function
+    about: claims a heap overflow in a function that does not exist
+    finding: does not appear anywhere in the code

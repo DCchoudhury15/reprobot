@@ -1,0 +1,17 @@
+version: 1
+project: jq
+commit: c9a51565214eece8f1053089739aea73145bfd6b
+profile: asan
+run:
+  cmd: ["bin/jq", ".", "poc/num.json"]
+  timeout_seconds: 30
+  repeat: 3
+files:
+  - num.json
+claim:
+  sanitizer: address
+  kind: heap-buffer-overflow
+  frame: jvp_literal_number_literal
+  text: |
+    Printing a number with a negative exponent overflows a heap buffer in
+    jvp_literal_number_literal in jv.c.
