@@ -88,6 +88,11 @@ fails and there is no `RESULTS.md` for curl.
 The likely reason, from the curl advisory: the overflow needs a slow SOCKS5
 handshake and a hostname longer than curl's download buffer (about 100 KB in
 the curl tool unless `--limit-rate` makes it smaller). The current input
-sends a 260 byte hostname in one step. The next step is to use curl's own
-regression test for this CVE as the input.
+sends a 260 byte hostname in one step. It comes from curl's own regression
+test for the fix (`tests/data/test728`), and that test only checks that the
+fixed curl refuses the hostname with error 97. On the vulnerable commit the
+same input makes curl go on without overflowing anything, so the test cannot
+give a sanitizer crash. A working curl case needs either an input built for
+the overflow conditions above or a different curl bug whose regression test
+crashes under ASan.
 
