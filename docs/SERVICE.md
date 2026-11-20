@@ -156,6 +156,11 @@ curl -s -H "Authorization: Bearer $REPROBOT_TOKEN" \
 
 Results finished before the worker had a key are not signed afterwards.
 
+The key is the only secret a worker holds, and the job sandbox runs on the
+same host. Keep it readable only by the worker user, use one key per
+deployment, and switch to a new key if a worker host may have been reached
+(see Sandbox in DESIGN.md).
+
 ## Jobs
 
 A job is `queued`, `running`, `done` or `failed`.

@@ -161,16 +161,26 @@ which is future work.
 
 v0 uses Docker. It uses the gVisor runtime (`runsc`) when it is installed and
 falls back to `runc` with hardening flags when it is not. Firecracker on bare
-metal comes later. Workers hold no secrets: inputs go in, results come out.
+metal comes later.
+
+Workers hold one secret at most: the signing key, when they run with
+`--sign-key`. Code that escapes the sandbox onto a worker host could read
+that key and sign false verdicts. So keep the key only on worker hosts, give
+each deployment its own key, and make a new key (and publish the new public
+key) if a worker host may have been reached. Without `--sign-key`, workers
+hold no secrets: inputs go in, results come out.
 
 ## How we know it works
 
 For a real bug, the same reproducer must give `REPRODUCED_AS_CLAIMED` on the
 vulnerable commit and `NOT_REPRODUCED` on the fix commit. If the fix is
-reverted, it must flip back. Every test fixture follows this rule.
+reverted, it must flip back. Every test fixture follows this rule, and so
+does the real CVE evaluation in `eval/` (libxml2 and jq).
 
 ## Later
 
-Postgres job queue with leases, intake API, result page, GitHub App for
-private vulnerability reports, OSS-Fuzz project import, fix verification,
-bisect, signed results, Firecracker.
+GitHub App for private vulnerability reports, OSS-Fuzz project import, fix
+verification, bisect, an out-of-process crash check (see Fake reports),
+Firecracker. Built since this list was first written: the Postgres job
+queue with leases, the intake API with tokens and rate limits, the result
+page, and signed results.
