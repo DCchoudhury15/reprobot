@@ -94,6 +94,8 @@ h2{font:400 clamp(40px,5.4vw,76px)/.95 var(--serif);letter-spacing:-.015em}
 .chip{padding:10px 13px;border:1px solid var(--line2);border-radius:2px;background:rgba(10,17,20,.82);font:500 11px/1.2 var(--mono);color:#c3cbc6;transition:all .15s;text-align:left}
 .chip:hover{border-color:var(--brass);color:var(--ivory);transform:translateY(-2px)}
 .chip[aria-pressed="true"]{background:var(--ivory);border-color:var(--ivory);color:#0a1114}
+.chip .proj{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--brass);margin-bottom:3px}
+.chip[aria-pressed="true"] .proj{color:var(--brass2)}
 .chip.big{font:600 14px/1.2 var(--sans);padding:12px 15px}
 .seg{display:inline-grid;grid-template-columns:1fr 1fr;margin-top:22px;border:1px solid var(--line2);border-radius:2px;background:rgba(10,17,20,.82);position:relative}
 .seg button{position:relative;z-index:1;padding:13px 20px;font:700 14px/1.1 var(--sans);color:var(--muted);transition:color .2s;text-align:center}
@@ -203,10 +205,10 @@ h2{font:400 clamp(40px,5.4vw,76px)/.95 var(--serif);letter-spacing:-.015em}
 
 <section class="act flip-side" id="real">
   <div class="rv">
-    <h2>Five real CVEs. <em>Flip the fix.</em></h2>
+    <h2><span id="ncve">Seven</span> real CVEs. <em>Flip the fix.</em></h2>
     <div class="chips" id="cves"></div>
     <div class="seg" id="seg" data-at="vuln"><button type="button" data-at="vuln" aria-pressed="true">Before the fix<small></small></button><button type="button" data-at="fix" aria-pressed="false">After the fix<small></small></button></div>
-    <p class="score"><b>5/5</b> caught · <b>5/5</b> gone after the fix · <b>3/3</b> fakes rejected</p>
+    <p class="score" id="score"><b>7/7</b> caught · <b>7/7</b> gone after the fix · <b>5/5</b> fakes rejected</p>
   </div>
   <div class="bay rv">
     <div id="bot2"></div>
@@ -668,7 +670,15 @@ h2{font:400 clamp(40px,5.4vw,76px)/.95 var(--serif);letter-spacing:-.015em}
   /* ================= act 2: flip the fix ================= */
   var cur = 0, at = "vuln", ftok = 0;
   var bot2 = Trio($("#bot2"), { onEye: function () { setAt(at === "vuln" ? "fix" : "vuln"); } });
-  $("#cves").innerHTML = R.real.map(function (c, i) { return '<button type="button" class="chip" aria-pressed="' + (i === 0) + '" data-i="' + i + '" title="' + esc(c.title) + '">' + c.id + "</button>"; }).join("");
+  $("#cves").innerHTML = R.real.map(function (c, i) { return '<button type="button" class="chip" aria-pressed="' + (i === 0) + '" data-i="' + i + '" title="' + esc(c.project + ": " + c.title) + '"><span class="proj">' + esc(c.project) + "</span>" + c.id + "</button>"; }).join("");
+  (function () {
+    var n = R.real.length, words = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"];
+    var caught = R.real.filter(function (c) { return c.vuln.state === "REPRODUCED_AS_CLAIMED"; }).length;
+    var gone = R.real.filter(function (c) { return c.fix.state === "NOT_REPRODUCED"; }).length;
+    var rej = R.fakes.filter(function (f) { return f.state === "NOT_REPRODUCED"; }).length;
+    $("#ncve").textContent = words[n] || String(n);
+    $("#score").innerHTML = "<b>" + caught + "/" + n + "</b> caught · <b>" + gone + "/" + n + "</b> gone after the fix · <b>" + rej + "/" + R.fakes.length + "</b> fakes rejected";
+  })();
   async function drawFlip(quiet) {
     var my = ++ftok, c = R.real[cur], s = c[at], crash = at === "vuln", st = crash ? "crash" : "ok", k;
     $("#seg").setAttribute("data-at", at);
@@ -678,7 +688,7 @@ h2{font:400 clamp(40px,5.4vw,76px)/.95 var(--serif);letter-spacing:-.015em}
     var h = verdictHTML(s.state, s.reason);
     h += '<div class="frame">' + (crash ? "<b>" + esc(s.kind) + "</b> in <b>" + esc(s.frames[0].fn) + "</b>" : esc(c.title)) + "</div>";
     if (crash) h += fp(s.signature, HUE[1]);
-    h += '<div class="links"><a href="' + GH + "eval/libxml2/" + c.dir + '/repro.yaml">repro.yaml</a><a href="' + GH + 'eval/libxml2/RESULTS.md">all results</a></div>';
+    h += '<div class="links"><a href="' + GH + "eval/" + c.project + "/" + c.dir + '/repro.yaml">repro.yaml</a><a href="' + GH + "eval/" + c.project + '/RESULTS.md">all ' + esc(c.project) + " results</a></div>";
     $("#v2").innerHTML = h;
   }
   function setAt(a) { at = a; drawFlip(); }

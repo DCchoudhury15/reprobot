@@ -12,6 +12,8 @@
 // Needs Docker, git and network access to clone the project. Set
 // REPROBOT_EVAL_CACHE to keep the git mirror and builds between runs, and
 // REPROBOT_EVAL_WRITE=1 to rewrite RESULTS.md in each project dir.
+// REPROBOT_EVAL_SITE=1 writes site.json in each project dir and rebuilds
+// site/real.js, the recorded runs the project site shows, from all of them.
 package eval
 
 import (
@@ -38,6 +40,7 @@ type caseFile struct {
 type realCase struct {
 	Dir   string `yaml:"dir"`
 	ID    string `yaml:"id"`
+	Title string `yaml:"title"` // short name for the site
 	Fix   string `yaml:"fix"`   // full id of the fix commit
 	Input string `yaml:"input"` // where the proof of concept comes from
 }
@@ -84,6 +87,7 @@ func runProject(t *testing.T, name string) {
 		crash *result.Crash
 	}
 	var bugs []bug
+	site := siteProject{Project: name, Recorded: time.Now().UTC().Format("2006-01-02")}
 	for _, c := range cf.Real {
 		t.Run(c.Dir, func(t *testing.T) {
 			repro := filepath.Join(dir, c.Dir, "repro.yaml")
@@ -111,6 +115,10 @@ func runProject(t *testing.T, name string) {
 			fmt.Fprintf(&out, "| %s | `%s` | %s | %s | %s | %s | %s | `%s` | %s | %s |\n",
 				c.ID, short(vuln.Inputs.Commit), vuln.State, crash, sig, line, took(vuln),
 				short(c.Fix), fixed.State, took(fixed))
+			r := siteCase(t, name, filepath.Join(dir, c.Dir), vuln)
+			r.ID, r.Title, r.Input = c.ID, c.Title, c.Input
+			r.Vuln, r.Fix = siteRun(vuln), siteRun(fixed)
+			site.Real = append(site.Real, r)
 		})
 	}
 	// The same rule the store uses: same signature, and the same site or
@@ -145,12 +153,24 @@ func runProject(t *testing.T, name string) {
 			}
 			fmt.Fprintf(&out, "| %s | %s | %s | %s |\n",
 				c.About, res.State, strings.Join(res.ClaimFindings, "; "), took(res))
+			f := siteCase(t, name, filepath.Join(dir, c.Dir), res)
+			run := siteRun(res)
+			site.Fakes = append(site.Fakes, siteFake{
+				Project: name, Dir: c.Dir, About: c.About, Commit: run.Commit, Claim: f.Claim,
+				State: run.State, Reason: run.Reason, RunsMs: run.RunsMs,
+				Findings: append([]string{}, res.ClaimFindings...), StderrHasReport: stderrHasReport(res),
+			})
 		})
 	}
 
 	t.Log("\n" + out.String())
 	if os.Getenv("REPROBOT_EVAL_WRITE") == "1" && !t.Failed() {
 		if err := os.WriteFile(filepath.Join(dir, "RESULTS.md"), []byte(out.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if os.Getenv("REPROBOT_EVAL_SITE") == "1" && !t.Failed() {
+		if err := writeSite(dir, site); err != nil {
 			t.Fatal(err)
 		}
 	}

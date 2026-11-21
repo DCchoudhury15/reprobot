@@ -8,10 +8,12 @@ project: project.yaml
 real:
   - dir: cve-2023-50246
     id: CVE-2023-50246
+    title: Heap overflow printing a huge negative exponent
     fix: 71c2ab509a8628dbbad4bc7b3f98a64aa90d3297
     input: the regression test added to tests/shtest in the fix commit
   - dir: cve-2023-50268
     id: CVE-2023-50268
+    title: Stack overflow comparing a NaN with a payload
     fix: c9a51565214eece8f1053089739aea73145bfd6b
     input: the regression test added to tests/shtest in the fix commit
 false:

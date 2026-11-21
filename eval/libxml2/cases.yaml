@@ -7,22 +7,27 @@ project: project.yaml
 real:
   - dir: cve-2025-49794
     id: CVE-2025-49794
+    title: Use after free in schematron reports
     fix: 71e1e8af5ee46dad1b57bb96cfbf1c3ad21fbd7b
     input: test file from the upstream fix commit
   - dir: cve-2025-49796
     id: CVE-2025-49796
+    title: Type confusion in schematron reports
     fix: 71e1e8af5ee46dad1b57bb96cfbf1c3ad21fbd7b
     input: test file from the upstream fix commit
   - dir: cve-2025-49795
     id: CVE-2025-49795
+    title: NULL read with an unknown XPath function
     fix: 499bcb78ab389f60c2fd634ce410d4bb85c18765
     input: test file from the upstream fix commit, with its broken first tag closed
   - dir: cve-2025-24928
     id: CVE-2025-24928
+    title: Stack overflow in DTD error messages
     fix: 8c8753ad5280ee13aee5eec9b0f6eee2ed920f57
     input: written for this evaluation from the fix diff
   - dir: cve-2023-28484
     id: CVE-2023-28484
+    title: NULL read in schema type fixup
     fix: e4f85f1bd2eb34d9b49da9154a4cc3a1bc284f68
     input: test file from the upstream fix commit
 false:

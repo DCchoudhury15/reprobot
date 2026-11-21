@@ -23,6 +23,9 @@ Needs Docker, git and network access to clone the project. Useful settings:
 
 - `REPROBOT_EVAL_CACHE=DIR` keeps the git mirror and the builds between runs.
 - `REPROBOT_EVAL_WRITE=1` rewrites `RESULTS.md` when every case passes.
+- `REPROBOT_EVAL_SITE=1` writes `site.json` next to `RESULTS.md` when every
+  case passes, and rebuilds `site/real.js` (the recorded runs the project site
+  shows) from the `site.json` of each project the site lists.
 
 ## libxml2
 

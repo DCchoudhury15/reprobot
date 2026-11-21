@@ -1,0 +1,188 @@
+{
+ "project": "jq",
+ "recorded": "2026-11-21",
+ "real": [
+  {
+   "project": "jq",
+   "id": "CVE-2023-50246",
+   "dir": "cve-2023-50246",
+   "title": "Heap overflow printing a huge negative exponent",
+   "input": "the regression test added to tests/shtest in the fix commit",
+   "cmd": "bin/jq . poc/num.json",
+   "files": [
+    {
+     "name": "num.json",
+     "bytes": 16
+    }
+   ],
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "jvp_literal_number_literal"
+   },
+   "vuln": {
+    "commit": "c9a51565214eece8f1053089739aea73145bfd6b",
+    "state": "REPRODUCED_AS_CLAIMED",
+    "reason": "crashed in 3 of 3 runs, as claimed",
+    "crashed": 3,
+    "runsMs": [
+     264,
+     251,
+     259
+    ],
+    "exit": [
+     90,
+     76,
+     117
+    ],
+    "kind": "heap-buffer-overflow",
+    "access": "WRITE",
+    "size": 1,
+    "frames": [
+     {
+      "fn": "decToString",
+      "at": "decNumber.c:3764"
+     },
+     {
+      "fn": "decNumberToString",
+      "at": "decNumber.c:449"
+     },
+     {
+      "fn": "jvp_literal_number_literal",
+      "at": "jv.c:644"
+     }
+    ],
+    "signature": "37277a99860961d5",
+    "site": "ba42b95f8fe6a92f",
+    "line": "*c='\\0'; // terminate the string (all paths)"
+   },
+   "fix": {
+    "commit": "71c2ab509a8628dbbad4bc7b3f98a64aa90d3297",
+    "state": "NOT_REPRODUCED",
+    "reason": "no crash in 3 runs",
+    "crashed": 0,
+    "runsMs": [
+     260,
+     244,
+     237
+    ],
+    "exit": [
+     0,
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "project": "jq",
+   "id": "CVE-2023-50268",
+   "dir": "cve-2023-50268",
+   "title": "Stack overflow comparing a NaN with a payload",
+   "input": "the regression test added to tests/shtest in the fix commit",
+   "cmd": "bin/jq 1 != . poc/nan.json",
+   "files": [
+    {
+     "name": "nan.json",
+     "bytes": 8
+    }
+   ],
+   "claim": {
+    "kind": "stack-buffer-overflow",
+    "frame": "jvp_number_cmp"
+   },
+   "vuln": {
+    "commit": "c5fd64ba975ee35df17bb0c335efb00bffce4d91",
+    "state": "REPRODUCED_AS_CLAIMED",
+    "reason": "crashed in 3 of 3 runs, as claimed",
+    "crashed": 3,
+    "runsMs": [
+     268,
+     262,
+     280
+    ],
+    "exit": [
+     74,
+     97,
+     71
+    ],
+    "kind": "stack-buffer-overflow",
+    "access": "WRITE",
+    "size": 2,
+    "frames": [
+     {
+      "fn": "decNumberCopy",
+      "at": "decNumber.c:3375"
+     },
+     {
+      "fn": "decNaNs",
+      "at": "decNumber.c:7706"
+     },
+     {
+      "fn": "decCompareOp",
+      "at": "decNumber.c:6085"
+     }
+    ],
+    "signature": "3bcf0a0095071c74",
+    "site": "9921752f71ae03e4",
+    "line": "for (s=src-\u003elsu+1; s\u003csmsup; s++, d++) *d=*s;"
+   },
+   "fix": {
+    "commit": "c9a51565214eece8f1053089739aea73145bfd6b",
+    "state": "NOT_REPRODUCED",
+    "reason": "no crash in 3 runs",
+    "crashed": 0,
+    "runsMs": [
+     250,
+     247,
+     255
+    ],
+    "exit": [
+     0,
+     0,
+     0
+    ]
+   }
+  }
+ ],
+ "fakes": [
+  {
+   "project": "jq",
+   "dir": "false-small-exponent",
+   "about": "a harmless number, claims the CVE-2023-50246 heap overflow",
+   "commit": "c9a51565214eece8f1053089739aea73145bfd6b",
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "jvp_literal_number_literal"
+   },
+   "state": "NOT_REPRODUCED",
+   "reason": "no crash in 3 runs",
+   "runsMs": [
+    248,
+    256,
+    236
+   ],
+   "findings": [],
+   "stderrHasReport": false
+  },
+  {
+   "project": "jq",
+   "dir": "false-made-up-function",
+   "about": "claims a heap overflow in a function that does not exist",
+   "commit": "c9a51565214eece8f1053089739aea73145bfd6b",
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "jvp_number_scientific_print"
+   },
+   "state": "NOT_REPRODUCED",
+   "reason": "no crash in 3 runs",
+   "runsMs": [
+    253,
+    241,
+    257
+   ],
+   "findings": [
+    "function \"jvp_number_scientific_print\" does not appear anywhere in the code at c9a5156"
+   ],
+   "stderrHasReport": false
+  }
+ ]
+}
