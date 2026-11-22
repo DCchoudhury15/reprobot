@@ -129,8 +129,18 @@ func Run(ctx context.Context, s Spec) (Outcome, error) {
 		_, _ = docker(cctx, "rm", "-f", name)
 	}()
 
-	if _, err := docker(ctx, args...); err != nil {
+	// docker create is not cut short by ctx. If the client were killed
+	// mid-create, the daemon could still make the container after the rm
+	// above had run, and it would be left behind. Create is quick, so it
+	// gets its own bound and ctx is checked once it returns.
+	cctx, cancelCreate := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	_, err = docker(cctx, args...)
+	cancelCreate()
+	if err != nil {
 		return out, fmt.Errorf("create container: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return out, fmt.Errorf("run container: %w", err)
 	}
 
 	stdout := &headBuffer{limit: MaxStdout}

@@ -77,10 +77,16 @@ func startHelper(ctx context.Context, cacheDir string, servers []spec.Server, po
 		"-files", "/files",
 	}
 	h := &helper{name: name}
-	if _, err := dockerCmd(ctx, args...); err != nil {
-		// The daemon may have made the container anyway, for example when
-		// ctx ended during create. rm -f of a name that does not exist
-		// only returns an error.
+	// Create is not cut short by ctx: a killed client can leave the daemon
+	// to make the container after cleanup ran (see sandbox.Run).
+	cctx, cancelCreate := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	_, err = dockerCmd(cctx, args...)
+	cancelCreate()
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		// rm -f of a name that does not exist only returns an error.
 		h.cleanup(ctx)
 		return nil, fmt.Errorf("helper: create: %w", err)
 	}
