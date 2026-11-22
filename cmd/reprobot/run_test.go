@@ -201,3 +201,81 @@ func TestJSONOutput(t *testing.T) {
 		t.Errorf("JSON is not indented:\n%s", out.String())
 	}
 }
+
+func TestRunFix(t *testing.T) {
+	crash := &result.Crash{Kind: "heap-buffer-overflow", Signature: "A"}
+	tests := []struct {
+		name      string
+		before    result.State
+		after     result.State
+		json      bool
+		wantCode  int
+		wantRuns  int
+		wantInOut string
+	}{
+		{"fixed", result.ReproducedAsClaimed, result.NotReproduced, false, 0, 2, "FIXED"},
+		{"not fixed", result.ReproducedAsClaimed, result.ReproducedAsClaimed, false, 1, 2, "NOT_FIXED"},
+		{"report does not reproduce", result.NotReproduced, "", false, 1, 1, "CANNOT_TELL"},
+		{"json", result.ReproducedDifferent, result.NotReproduced, true, 0, 2, `"fix": "FIXED"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []runner.Options
+			fake := func(_ context.Context, o runner.Options) (*result.Result, error) {
+				got = append(got, o)
+				if o.Commit == "" {
+					return &result.Result{State: tt.before, Crash: crash, Inputs: result.Inputs{Commit: "aaaaaaaaaa"}}, nil
+				}
+				return &result.Result{State: tt.after, Crash: crash, Inputs: result.Inputs{Commit: "bbbbbbbbbb"}}, nil
+			}
+			args := []string{"--project", "p", "--cache", "/c", "--fix", "bbbbbbb"}
+			if tt.json {
+				args = append(args, "--json")
+			}
+			var out, errOut bytes.Buffer
+			code := runMain(context.Background(), append(args, "r"), &out, &errOut, fake)
+			if code != tt.wantCode {
+				t.Errorf("exit %d, want %d (stderr %q)", code, tt.wantCode, errOut.String())
+			}
+			if len(got) != tt.wantRuns {
+				t.Fatalf("%d runs, want %d", len(got), tt.wantRuns)
+			}
+			if got[0].Commit != "" {
+				t.Errorf("first run used commit %q, want the report's", got[0].Commit)
+			}
+			if tt.wantRuns == 2 && got[1] != (runner.Options{ProjectPath: "p", ReproPath: "r", CacheDir: "/c", Commit: "bbbbbbb"}) {
+				t.Errorf("fix run options %+v", got[1])
+			}
+			if !strings.Contains(out.String(), tt.wantInOut) {
+				t.Errorf("output does not contain %q:\n%s", tt.wantInOut, out.String())
+			}
+			if tt.json {
+				var r fixReport
+				if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+					t.Fatal(err)
+				}
+				if r.Report.Inputs.Commit != "aaaaaaaaaa" || r.FixRun == nil || r.FixRun.Inputs.Commit != "bbbbbbbbbb" {
+					t.Errorf("json report %+v, fix run %+v", r.Report, r.FixRun)
+				}
+			}
+		})
+	}
+
+	// An infrastructure error on the fix run is exit 3.
+	n := 0
+	fake := func(context.Context, runner.Options) (*result.Result, error) {
+		n++
+		if n == 2 {
+			return nil, errors.New("docker is down")
+		}
+		return &result.Result{State: result.ReproducedAsClaimed}, nil
+	}
+	var out, errOut bytes.Buffer
+	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--fix", "b", "r"}, &out, &errOut, fake); code != exitInfra {
+		t.Errorf("fix run infrastructure error: exit %d, want %d", code, exitInfra)
+	}
+
+	if _, err := parseRunArgs([]string{"--project", "p", "--fix", "b", "--sign-key", "k", "r"}); err == nil {
+		t.Error("--fix with --sign-key: no error")
+	}
+}

@@ -177,10 +177,23 @@ vulnerable commit and `NOT_REPRODUCED` on the fix commit. If the fix is
 reverted, it must flip back. Every test fixture follows this rule, and so
 does the real CVE evaluation in `eval/` (libxml2 and jq).
 
+## Fix check
+
+`reprobot run --fix COMMIT` runs the same report file twice: on the commit
+in the report, then on COMMIT. Only the commit changes, so the reporter
+files, the command and the reproducer hash stay the same. If the first run
+does not reproduce (all runs crashed), the fix commit is not built, because
+there is nothing to check. The verdict is `FIXED` (crashed, then no run
+crashed), `NOT_FIXED` (still crashes in some or all runs, with the same or a
+different crash) or `CANNOT_TELL` (the fix commit gave `BUILD_FAILED`,
+`TIMEOUT`, `OOM` or `INVALID_INPUT`). A `FLAKY` report commit is
+`CANNOT_TELL` too: a bug that crashes only sometimes cannot show that a fix
+works.
+
 ## Later
 
 GitHub App for private vulnerability reports, OSS-Fuzz project import, fix
-verification, bisect, an out-of-process crash check (see Fake reports),
-Firecracker. Built since this list was first written: the Postgres job
-queue with leases, the intake API with tokens and rate limits, the result
-page, and signed results.
+checks in the service, bisect, an out-of-process crash check (see Fake
+reports), Firecracker. Built since this list was first written: the Postgres
+job queue with leases, the intake API with tokens and rate limits, the
+result page, signed results, and the fix check in the CLI (`run --fix`).

@@ -28,23 +28,26 @@ const (
 	exitInfra     = 3 // infrastructure error (Docker, disk, network)
 )
 
-const runUsage = `usage: reprobot run --project project.yaml [--cache DIR] [--json | --sign-key KEY] repro.yaml
+const runUsage = `usage: reprobot run --project project.yaml [--cache DIR] [--fix COMMIT] [--json | --sign-key KEY] repro.yaml
 
   --project FILE  maintainer project config (required)
   --cache DIR     git mirrors and build cache
                   (default $XDG_CACHE_HOME/reprobot, else ~/.cache/reprobot)
   --json          print the result as JSON
   --sign-key KEY  print the result as a signed envelope (see reprobot keygen)
+  --fix COMMIT    also run the report on COMMIT, the commit that claims to
+                  fix it, and say whether the fix works
 
 Flags go before repro.yaml.
-Exit codes: 0 reproduced as claimed, 1 any other verdict, 2 usage error,
-3 infrastructure error.`
+Exit codes: 0 reproduced as claimed (with --fix: FIXED), 1 any other
+verdict, 2 usage error, 3 infrastructure error.`
 
 type runArgs struct {
 	project string
 	cache   string
 	json    bool
 	signKey string
+	fix     string
 	repro   string
 }
 
@@ -78,10 +81,14 @@ func runMain(ctx context.Context, args []string, stdout, stderr io.Writer, run f
 			return exitInfra
 		}
 	}
-	res, err := run(ctx, runner.Options{ProjectPath: a.project, ReproPath: a.repro, CacheDir: a.cache})
+	opts := runner.Options{ProjectPath: a.project, ReproPath: a.repro, CacheDir: a.cache}
+	res, err := run(ctx, opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "reprobot run: %v\n", err)
 		return exitInfra
+	}
+	if a.fix != "" {
+		return fixMain(ctx, a, opts, res, stdout, stderr, run)
 	}
 	switch {
 	case key != nil:
@@ -114,6 +121,7 @@ func parseRunArgs(args []string) (runArgs, error) {
 	fs.StringVar(&a.cache, "cache", "", "")
 	fs.BoolVar(&a.json, "json", false, "")
 	fs.StringVar(&a.signKey, "sign-key", "", "")
+	fs.StringVar(&a.fix, "fix", "", "")
 	if err := fs.Parse(args); err != nil {
 		return a, err
 	}
@@ -122,6 +130,8 @@ func parseRunArgs(args []string) (runArgs, error) {
 		return a, errors.New("--project is required")
 	case a.json && a.signKey != "":
 		return a, errors.New("--json and --sign-key do not go together; the envelope holds the JSON")
+	case a.fix != "" && a.signKey != "":
+		return a, errors.New("--fix and --sign-key do not go together yet; sign each run on its own")
 	case fs.NArg() == 0:
 		return a, errors.New("missing repro.yaml")
 	case fs.NArg() > 1:
@@ -130,6 +140,51 @@ func parseRunArgs(args []string) (runArgs, error) {
 	}
 	a.repro = fs.Arg(0)
 	return a, nil
+}
+
+// fixReport is the --json output of a fix check.
+type fixReport struct {
+	Fix    result.FixState `json:"fix"`
+	Reason string          `json:"reason"`
+	Report *result.Result  `json:"report"`            // on the report commit
+	FixRun *result.Result  `json:"fix_run,omitempty"` // on the fix commit; absent when the report did not reproduce
+}
+
+// fixMain runs the report again on the fix commit, when it reproduced on
+// its own commit, and prints the fix verdict.
+func fixMain(ctx context.Context, a runArgs, opts runner.Options, before *result.Result, stdout, stderr io.Writer, run func(context.Context, runner.Options) (*result.Result, error)) int {
+	var after *result.Result
+	if before.Reproduced() {
+		opts.Commit = a.fix
+		var err error
+		if after, err = run(ctx, opts); err != nil {
+			fmt.Fprintf(stderr, "reprobot run: fix commit: %v\n", err)
+			return exitInfra
+		}
+	}
+	state, reason := result.CheckFix(before, after)
+	if a.json {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(fixReport{Fix: state, Reason: reason, Report: before, FixRun: after}); err != nil {
+			fmt.Fprintf(stderr, "reprobot run: %v\n", err)
+			return exitInfra
+		}
+	} else {
+		fmt.Fprintln(stdout, "== on the report commit ==")
+		printResult(stdout, before)
+		if after != nil {
+			fmt.Fprintln(stdout, "\n== on the fix commit ==")
+			printResult(stdout, after)
+		}
+		fmt.Fprintln(stdout)
+		fmt.Fprintf(stdout, "%-10s %s\n", "fix:", state)
+		fmt.Fprintf(stdout, "%-10s %s\n", "reason:", reason)
+	}
+	if state == result.Fixed {
+		return exitAsClaimed
+	}
+	return exitVerdict
 }
 
 // defaultCacheDir is $XDG_CACHE_HOME/reprobot, else ~/.cache/reprobot.

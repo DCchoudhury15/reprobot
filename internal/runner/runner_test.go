@@ -180,6 +180,7 @@ type fake struct {
 	project   *spec.Project
 	reproPath string
 	cacheDir  string
+	commit    string // Options.Commit
 	binDir    string
 	buildOut  build.Output
 	outcomes  []sandbox.Outcome // one per run
@@ -270,7 +271,11 @@ func (f *fake) deps() deps {
 		},
 		resolve: func(ctx context.Context, cacheDir, repo, ref string) (string, string, error) {
 			f.calls = append(f.calls, "resolve")
-			if cacheDir != f.cacheDir || repo != "/repo/tinyparse" || ref != "v1.0" {
+			wantRef := "v1.0"
+			if f.commit != "" {
+				wantRef = f.commit
+			}
+			if cacheDir != f.cacheDir || repo != "/repo/tinyparse" || ref != wantRef {
 				t.Errorf("resolve(%q, %q, %q)", cacheDir, repo, ref)
 			}
 			if f.resolveErr != nil {
@@ -385,7 +390,7 @@ func readPocDir(t *testing.T, s sandbox.Spec) map[string]string {
 
 func (f *fake) run(t *testing.T) *result.Result {
 	t.Helper()
-	res, err := run(context.Background(), Options{ProjectPath: "/p/project.yaml", ReproPath: f.reproPath, CacheDir: f.cacheDir}, f.deps())
+	res, err := run(context.Background(), Options{ProjectPath: "/p/project.yaml", ReproPath: f.reproPath, CacheDir: f.cacheDir, Commit: f.commit}, f.deps())
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -592,6 +597,30 @@ func TestRunBuildFailedKeepsDetails(t *testing.T) {
 	}
 	if want := []string{"static finding"}; !reflect.DeepEqual(res.ClaimFindings, want) {
 		t.Errorf("claim findings = %q, want %q", res.ClaimFindings, want)
+	}
+}
+
+func TestRunCommitOverride(t *testing.T) {
+	f := newFake(t)
+	f.commit = "fix1234"
+	res := f.run(t)
+	if res.State != result.ReproducedAsClaimed {
+		t.Fatalf("state %s: %s", res.State, res.Reason)
+	}
+	if f.called("resolve") != 1 {
+		t.Errorf("resolve called %d times", f.called("resolve"))
+	}
+
+	// A bad override is the caller's input, so it is INVALID_INPUT and
+	// nothing is fetched.
+	f = newFake(t)
+	f.commit = "--upload-pack=x"
+	res = f.run(t)
+	if res.State != result.InvalidInput || !strings.Contains(res.Reason, "--upload-pack=x") {
+		t.Errorf("state %s, reason %q", res.State, res.Reason)
+	}
+	if f.called("resolve") != 0 {
+		t.Error("fetched despite a bad commit")
 	}
 }
 

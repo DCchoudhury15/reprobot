@@ -103,6 +103,36 @@ func TestE2EVulnFixRevert(t *testing.T) {
 	}
 }
 
+// A fix check runs the same report file on the vulnerable commit and, with
+// Options.Commit, on the fix commit and the revert.
+func TestE2EFixCheck(t *testing.T) {
+	f := testutil.NewTinyparseRepo(t)
+	cache := t.TempDir()
+	projectPath, reproPath := testutil.WriteInputs(t, f.RepoDir, f.Vuln)
+	at := func(commit string) *result.Result {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		res, err := Run(ctx, Options{ProjectPath: projectPath, ReproPath: reproPath, CacheDir: cache, Commit: commit})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return res
+	}
+	before := at("")
+	wantState(t, before, result.ReproducedAsClaimed)
+	fixed := at(f.Fix)
+	if fixed.Inputs.Commit != f.Fix {
+		t.Errorf("fix run tested %s, want %s", fixed.Inputs.Commit, f.Fix)
+	}
+	if state, reason := result.CheckFix(before, fixed); state != result.Fixed {
+		t.Errorf("fix commit: %s (%s), want FIXED", state, reason)
+	}
+	if state, reason := result.CheckFix(before, at(f.Revert)); state != result.NotFixed {
+		t.Errorf("revert commit: %s (%s), want NOT_FIXED", state, reason)
+	}
+}
+
 func TestE2EOtherKind(t *testing.T) {
 	f := testutil.NewTinyparseRepo(t)
 	res := check(t, f.RepoDir, t.TempDir(), f.Vuln, func(_, repro string) {

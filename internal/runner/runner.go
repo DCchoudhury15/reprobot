@@ -31,6 +31,9 @@ type Options struct {
 	ProjectPath string // maintainer project config
 	ReproPath   string // reporter repro.yaml; its files sit next to it
 	CacheDir    string // git mirrors and build cache
+	// Commit, when set, is tested instead of the reproducer's commit. A
+	// fix check uses it to run the same report on the fix commit.
+	Commit string
 }
 
 // Settings for every proof of concept run.
@@ -236,6 +239,12 @@ func loadInputs(o Options, d deps) (inputs, error) {
 	var err error
 	if in.repro, err = d.loadReproducer(o.ReproPath); err != nil {
 		return in, err
+	}
+	if o.Commit != "" {
+		if !spec.ValidCommit(o.Commit) {
+			return in, fmt.Errorf("commit %q is not a commit hash or tag name", o.Commit)
+		}
+		in.repro.Commit = o.Commit
 	}
 	if in.project, err = d.loadProject(o.ProjectPath); err != nil {
 		return in, err

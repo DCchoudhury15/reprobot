@@ -147,6 +147,23 @@ Try it on `testdata/fixtures/tinyparse`. Exit codes: `0` reproduced as
 claimed, `1` any other verdict, `2` usage error, `3` infrastructure error.
 Add `--json` for the full result.
 
+**Check a fix.** Add `--fix COMMIT` to run the same report again on the
+commit that claims to fix it:
+
+```sh
+reprobot run --project project.yaml --fix 71c2ab5 repro.yaml
+```
+
+```
+fix:       FIXED
+reason:    crashed on c9a5156, no crash on 71c2ab5
+```
+
+`FIXED` means it crashed on the report commit and not on the fix.
+`NOT_FIXED` means it still crashes there. `CANNOT_TELL` means one side gave
+no usable answer, for example the report did not reproduce or the fix did
+not build. The exit code is `0` only for `FIXED`.
+
 ## Run it as a service
 
 `reprobot serve` takes reports over HTTP and shows result pages.
@@ -183,6 +200,7 @@ Early. What works and what is next:
 - ✅ static claim check and loopback test servers
 - ✅ service with tokens, per-token access and rate limits
 - ✅ signed results
+- ✅ fix check (`--fix`)
 - ⬜ OSS-Fuzz project import
 - ⬜ GitHub App for private vulnerability reports
 - ⬜ gVisor as the default sandbox

@@ -132,7 +132,7 @@ func (r *Reproducer) validate(v *invalid) {
 	if !idRe.MatchString(r.Project) {
 		v.add("project %q is not a valid id", r.Project)
 	}
-	if !validCommit(r.Commit) {
+	if !ValidCommit(r.Commit) {
 		v.add("commit %q is not a commit hash or tag name", r.Commit)
 	}
 	if !idRe.MatchString(r.Profile) {
@@ -304,9 +304,9 @@ func (p *Project) validate(v *invalid) {
 	}
 }
 
-// validCommit accepts a 7 to 40 char hex hash or a tag name. Tag names
+// ValidCommit accepts a 7 to 40 char hex hash or a tag name. Tag names
 // start with a letter or digit, so they can never be read as a git option.
-func validCommit(s string) bool {
+func ValidCommit(s string) bool {
 	if shaRe.MatchString(s) {
 		return true
 	}
