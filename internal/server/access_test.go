@@ -269,3 +269,94 @@ func TestSignedResult(t *testing.T) {
 		t.Errorf("signing key with none set: %d", resp.StatusCode)
 	}
 }
+
+// TestFixCheck covers a report sent with a fix commit: it is stored and
+// shown as pending, then the finished check is in the JSON, on the page,
+// and signed at /fix/signed, with the same access rules as the report.
+func TestFixCheck(t *testing.T) {
+	tokens, secret := tokensFile(t, "alice", "bob")
+	e := newEnvWith(t, func(s *server.Server) { s.Tokens = tokens })
+	ctx := context.Background()
+
+	body, ctype := form(t, goodRepro, nil, map[string]string{"fix_commit": " v1.2.3 "})
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/v1/reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req.Header.Set("Authorization", "Bearer "+secret["alice"])
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("create: %d %s", resp.StatusCode, out)
+	}
+	id := decode[struct {
+		ReportID string `json:"report_id"`
+	}](t, out).ReportID
+
+	type view struct {
+		Fix *struct {
+			Commit string
+			State  string
+			Reason string
+			Run    *result.Result
+			Signed bool
+		}
+	}
+	_, out = e.getAs(t, secret["alice"], "/v1/reports/"+id)
+	if v := decode[view](t, out); v.Fix == nil || v.Fix.Commit != "v1.2.3" || v.Fix.State != "" || v.Fix.Signed {
+		t.Fatalf("pending fix check: %s", out)
+	}
+	if _, page := e.getAs(t, secret["alice"], "/reports/"+id); !strings.Contains(string(page), "Fix check: not run yet") {
+		t.Errorf("page does not show the pending fix check:\n%s", page)
+	}
+
+	job, err := e.st.Claim(ctx, "w", time.Minute)
+	if err != nil || job == nil || job.FixCommit != "v1.2.3" {
+		t.Fatalf("Claim = %+v, %v", job, err)
+	}
+	res := &result.Result{State: result.ReproducedAsClaimed, Inputs: result.Inputs{Commit: "aaaa"}}
+	fixRun := &result.Result{State: result.NotReproduced, Inputs: result.Inputs{Commit: "bbbbbbbbbbbb"}, Runs: make([]result.RunOutcome, 3)}
+	fixEnv := []byte(`{"payloadType":"fix",  "payload":"e30=","signatures":[]}`)
+	if err := e.st.CompleteJob(ctx, job.ID, "w", store.Outcome{
+		Result:      res,
+		Fix:         &result.FixCheck{FixCommit: "v1.2.3", Fix: result.Fixed, Reason: "<b>no crash</b>", Report: res, FixRun: fixRun},
+		FixEnvelope: fixEnv,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, out = e.getAs(t, secret["alice"], "/v1/reports/"+id)
+	v := decode[view](t, out)
+	if v.Fix == nil || v.Fix.State != "FIXED" || v.Fix.Run == nil || v.Fix.Run.Inputs.Commit != "bbbbbbbbbbbb" || !v.Fix.Signed {
+		t.Errorf("finished fix check: %s", out)
+	}
+	_, page := e.getAs(t, secret["alice"], "/reports/"+id)
+	for _, want := range []string{"Fix check: FIXED", "&lt;b&gt;no crash&lt;/b&gt;", "bbbbbbbbbbbb", "0 of 3 runs crashed", "/v1/reports/" + id + "/fix/signed"} {
+		if !strings.Contains(string(page), want) {
+			t.Errorf("page does not contain %q", want)
+		}
+	}
+
+	if code, out := e.getAs(t, secret["alice"], "/v1/reports/"+id+"/fix/signed"); code != http.StatusOK || string(out) != string(fixEnv) {
+		t.Errorf("fix/signed: %d %s", code, out)
+	}
+	if code, out := e.getAs(t, secret["bob"], "/v1/reports/"+id+"/fix/signed"); code != http.StatusNotFound || strings.Contains(string(out), "payload") {
+		t.Errorf("bob reads alice's fix check: %d %s", code, out)
+	}
+	// The report has no signed result, only a signed fix check.
+	if code, out := e.getAs(t, secret["alice"], "/v1/reports/"+id+"/signed"); code != http.StatusNotFound || !strings.Contains(string(out), "no signed result") {
+		t.Errorf("signed: %d %s", code, out)
+	}
+
+	// A report without a fix commit has no fix section and no fix check.
+	plain, _, _, _ := e.st.CreateReport(ctx, store.ReportInput{Project: "tinyparse", Owner: "alice", Dir: "/d"})
+	_, out = e.getAs(t, secret["alice"], "/v1/reports/"+plain.String())
+	if strings.Contains(string(out), `"fix"`) {
+		t.Errorf("report without a fix commit shows a fix section: %s", out)
+	}
+	if code, out := e.getAs(t, secret["alice"], "/v1/reports/"+plain.String()+"/fix/signed"); code != http.StatusNotFound || !strings.Contains(string(out), "no signed fix check") {
+		t.Errorf("fix/signed without a fix check: %d %s", code, out)
+	}
+}

@@ -250,9 +250,12 @@ func TestRunFix(t *testing.T) {
 				t.Errorf("output does not contain %q:\n%s", tt.wantInOut, out.String())
 			}
 			if tt.json {
-				var r fixReport
+				var r result.FixCheck
 				if err := json.Unmarshal(out.Bytes(), &r); err != nil {
 					t.Fatal(err)
+				}
+				if r.FixCommit != "bbbbbbb" {
+					t.Errorf("json fix_commit %q, want bbbbbbb", r.FixCommit)
 				}
 				if r.Report.Inputs.Commit != "aaaaaaaaaa" || r.FixRun == nil || r.FixRun.Inputs.Commit != "bbbbbbbbbb" {
 					t.Errorf("json report %+v, fix run %+v", r.Report, r.FixRun)
@@ -273,9 +276,5 @@ func TestRunFix(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--fix", "b", "r"}, &out, &errOut, fake); code != exitInfra {
 		t.Errorf("fix run infrastructure error: exit %d, want %d", code, exitInfra)
-	}
-
-	if _, err := parseRunArgs([]string{"--project", "p", "--fix", "b", "--sign-key", "k", "r"}); err == nil {
-		t.Error("--fix with --sign-key: no error")
 	}
 }

@@ -75,6 +75,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/reports", protect(s.createReport))
 	mux.Handle("GET /v1/reports/{id}", protect(s.reportJSON))
 	mux.Handle("GET /v1/reports/{id}/signed", protect(s.reportSigned))
+	mux.Handle("GET /v1/reports/{id}/fix/signed", protect(s.fixSigned))
 	mux.Handle("GET /reports/{id}", protect(s.reportPage))
 	mux.HandleFunc("GET /v1/signing-key", s.signingKey)
 	mux.HandleFunc("GET /healthz", s.healthz)
@@ -214,6 +215,7 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		MaxPerHour:     s.ReportsPerHour,
 		ReproHash:      up.hash,
 		Dir:            dir,
+		FixCommit:      up.fixCommit,
 	})
 	if err != nil || !created {
 		// Nothing points at the new directory.
@@ -236,9 +238,10 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 }
 
 type upload struct {
-	repro    []byte
-	reporter string
-	hash     string
+	repro     []byte
+	reporter  string
+	fixCommit string
+	hash      string
 }
 
 // readUpload reads the multipart body and writes repro.yaml and the
@@ -246,7 +249,7 @@ type upload struct {
 func readUpload(mr *multipart.Reader, dir string) (*upload, error) {
 	up := &upload{}
 	seen := map[string]bool{}
-	haveRepro, haveReporter := false, false
+	haveRepro, haveReporter, haveFix := false, false, false
 	nfiles := 0
 	for {
 		part, err := mr.NextPart()
@@ -305,6 +308,20 @@ func readUpload(mr *multipart.Reader, dir string) (*upload, error) {
 				return nil, err
 			}
 			up.reporter = v
+		case "fix_commit":
+			if haveFix {
+				return nil, badRequest("more than one fix_commit field")
+			}
+			haveFix = true
+			data, err := io.ReadAll(io.LimitReader(part, maxKeyBytes+1))
+			if err != nil {
+				return nil, wrapRead(err)
+			}
+			v := strings.TrimSpace(string(data))
+			if !spec.ValidCommit(v) {
+				return nil, badRequest("fix_commit %q is not a commit hash or tag name", truncateText(v, 80))
+			}
+			up.fixCommit = v
 		default:
 			return nil, badRequest("unknown form field %q", part.FormName())
 		}
@@ -371,6 +388,14 @@ func checkFileName(name string) error {
 		return badRequest("file name %q is reserved", name)
 	}
 	return checkText("file name", name, maxFileNameBytes)
+}
+
+// truncateText cuts v to at most n runes, for error messages.
+func truncateText(v string, n int) string {
+	if r := []rune(v); len(r) > n {
+		return string(r[:n]) + "..."
+	}
+	return v
 }
 
 // checkText rejects values that are too long, not UTF-8, or contain
@@ -447,8 +472,23 @@ type reportView struct {
 	// Related reports share the signature but crash on another line.
 	Related []string `json:"related"`
 	// Signed is true when a signed result is at /v1/reports/{id}/signed.
-	Signed   bool   `json:"signed"`
-	envelope []byte // the signed result, byte for byte
+	Signed bool `json:"signed"`
+	// Fix is the fix check; nil when the report asked for none.
+	Fix         *fixView `json:"fix,omitempty"`
+	envelope    []byte   // the signed result, byte for byte
+	fixEnvelope []byte   // the signed fix check, byte for byte
+}
+
+// fixView is the fix check of a report. State is empty until the job is
+// done. The report run is Result, so it is not repeated here.
+type fixView struct {
+	Commit string          `json:"commit"`
+	State  result.FixState `json:"state,omitempty"`
+	Reason string          `json:"reason,omitempty"`
+	Run    *result.Result  `json:"run,omitempty"` // on the fix commit
+	// Signed is true when a signed fix check is at
+	// /v1/reports/{id}/fix/signed.
+	Signed bool `json:"signed"`
 }
 
 // loadReport returns nil, nil when the id is malformed or unknown, or the
@@ -493,6 +533,13 @@ func (s *Server) loadReport(ctx context.Context, rawID string) (*reportView, err
 		Related:     []string{},
 		Signed:      rep.Envelope != nil,
 		envelope:    rep.Envelope,
+		fixEnvelope: rep.FixEnvelope,
+	}
+	if rep.FixCommit != "" {
+		v.Fix = &fixView{Commit: rep.FixCommit, Signed: rep.FixEnvelope != nil}
+		if f := rep.Fix; f != nil {
+			v.Fix.State, v.Fix.Reason, v.Fix.Run = f.Fix, f.Reason, f.FixRun
+		}
 	}
 	dups, related, err := s.Store.Duplicates(ctx, rep.Project, rep.Signature, rep.Site, rep.ID, onlyOwner)
 	if err != nil {
@@ -522,6 +569,15 @@ func (s *Server) reportJSON(w http.ResponseWriter, r *http.Request) {
 
 // reportSigned serves the signed result exactly as the worker signed it.
 func (s *Server) reportSigned(w http.ResponseWriter, r *http.Request) {
+	s.serveEnvelope(w, r, "result", func(v *reportView) []byte { return v.envelope })
+}
+
+// fixSigned serves the signed fix check exactly as the worker signed it.
+func (s *Server) fixSigned(w http.ResponseWriter, r *http.Request) {
+	s.serveEnvelope(w, r, "fix check", func(v *reportView) []byte { return v.fixEnvelope })
+}
+
+func (s *Server) serveEnvelope(w http.ResponseWriter, r *http.Request, what string, pick func(*reportView) []byte) {
 	v, err := s.loadReport(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, err)
@@ -531,13 +587,14 @@ func (s *Server) reportSigned(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "report not found"})
 		return
 	}
-	if v.envelope == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this report has no signed result"})
+	env := pick(v)
+	if env == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this report has no signed " + what})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = w.Write(v.envelope)
+	_, _ = w.Write(env)
 }
 
 // signingKey serves the public key results are signed with. It is public,

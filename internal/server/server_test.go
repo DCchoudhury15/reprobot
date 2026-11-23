@@ -355,6 +355,9 @@ func TestCreateReportBadInput(t *testing.T) {
 		"duplicate file":    {repro: goodRepro, files: []file{{name: "a.bin", data: []byte("x")}, {name: "a.bin", data: []byte("y")}}},
 		"unknown field":     {repro: goodRepro, fields: map[string]string{"extra": "x"}},
 		"reporter too long": {repro: goodRepro, fields: map[string]string{"reporter": strings.Repeat("a", 300)}},
+		"fix commit range":  {repro: goodRepro, fields: map[string]string{"fix_commit": "v1..v2"}},
+		"fix commit flag":   {repro: goodRepro, fields: map[string]string{"fix_commit": "--upload-pack=x"}},
+		"fix commit empty":  {repro: goodRepro, fields: map[string]string{"fix_commit": ""}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

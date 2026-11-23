@@ -333,3 +333,94 @@ func TestWorkerSignsResults(t *testing.T) {
 		t.Errorf("worker without a key stored an envelope: %s", rep.Envelope)
 	}
 }
+
+func TestWorkerFixCheck(t *testing.T) {
+	st := storetest.New(t)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crash := &result.Crash{Kind: "heap-buffer-overflow", Signature: "A"}
+	var mu sync.Mutex
+	commits := map[string][]string{} // repro path -> commits run, "" = the report's own
+	failFixOnce := map[string]bool{"/d/flaky-infra/repro.yaml": true}
+	run := func(ctx context.Context, o runner.Options) (*result.Result, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		commits[o.ReproPath] = append(commits[o.ReproPath], o.Commit)
+		if o.Commit == "" {
+			state := result.ReproducedAsClaimed
+			if strings.Contains(o.ReproPath, "no-repro") {
+				state = result.NotReproduced
+			}
+			return &result.Result{State: state, Crash: crash, Inputs: result.Inputs{Commit: "aaaaaaaaaa"}}, nil
+		}
+		if failFixOnce[o.ReproPath] {
+			failFixOnce[o.ReproPath] = false
+			return nil, errors.New("docker is down")
+		}
+		return &result.Result{State: result.NotReproduced, Inputs: result.Inputs{Commit: "bbbbbbbbbb"}}, nil
+	}
+	create := func(dir string) uuid.UUID {
+		id, _, _, err := st.CreateReport(context.Background(), store.ReportInput{Project: "p", Dir: dir, FixCommit: "bbbbbbb"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	fixed, noRepro, flakyInfra := create("/d/fixed"), create("/d/no-repro"), create("/d/flaky-infra")
+	start(t, &worker.Worker{Store: st, Run: run, ProjectsDir: "/p", CacheDir: "/c",
+		Lease: 10 * time.Second, PollInterval: 20 * time.Millisecond, SignKey: priv})
+	for _, id := range []uuid.UUID{fixed, noRepro, flakyInfra} {
+		waitFor(t, 15*time.Second, "job done", func() bool { return getReport(t, st, id).JobState == store.JobDone })
+	}
+
+	// The fix commit was run after the report commit, and only when the
+	// report reproduced.
+	mu.Lock()
+	if got := commits["/d/fixed/repro.yaml"]; len(got) != 2 || got[0] != "" || got[1] != "bbbbbbb" {
+		t.Errorf("fixed: commits run %q", got)
+	}
+	if got := commits["/d/no-repro/repro.yaml"]; len(got) != 1 {
+		t.Errorf("no-repro: commits run %q, want only the report's", got)
+	}
+	// An infrastructure error on the fix run retries the whole job.
+	if got := commits["/d/flaky-infra/repro.yaml"]; len(got) != 4 {
+		t.Errorf("flaky-infra: commits run %q, want report+fix twice", got)
+	}
+	mu.Unlock()
+	if rep := getReport(t, st, flakyInfra); rep.Attempts != 2 || rep.Fix == nil || rep.Fix.Fix != result.Fixed {
+		t.Errorf("flaky-infra: attempts %d fix %+v", rep.Attempts, rep.Fix)
+	}
+	if rep := getReport(t, st, noRepro); rep.Fix == nil || rep.Fix.Fix != result.CannotTell || rep.Fix.FixRun != nil {
+		t.Errorf("no-repro: fix %+v", rep.Fix)
+	}
+
+	rep := getReport(t, st, fixed)
+	if rep.Fix == nil || rep.Fix.Fix != result.Fixed || rep.Fix.FixCommit != "bbbbbbb" {
+		t.Fatalf("fixed: fix %+v", rep.Fix)
+	}
+	// The signed fix check verifies, names its report, and is not a result.
+	env, err := sign.Decode(rep.FixEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sign.Verify(env, pub); err == nil {
+		t.Error("signed fix check verified as a result")
+	}
+	payload, err := sign.VerifyAs(env, pub, sign.FixPayloadType)
+	if err != nil {
+		t.Fatalf("stored fix envelope does not verify: %v", err)
+	}
+	var got result.FixCheck
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	id := fixed.String()
+	if got.ReportID != id || got.Fix != result.Fixed || got.Report.ReportID != id || got.FixRun.ReportID != id {
+		t.Errorf("signed fix check: %+v", got)
+	}
+	if rep.Envelope == nil {
+		t.Error("result envelope missing next to the fix check")
+	}
+}

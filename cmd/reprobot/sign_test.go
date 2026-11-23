@@ -88,3 +88,47 @@ func TestKeygenSignedRunVerify(t *testing.T) {
 		}
 	}
 }
+
+// TestSignedFixCheckVerify signs a fix check with --fix --sign-key and checks
+// it with verify. A forged fix verdict must not verify.
+func TestSignedFixCheckVerify(t *testing.T) {
+	dir := t.TempDir()
+	keygenCmd([]string{dir}, &bytes.Buffer{}, &bytes.Buffer{})
+	key, pub := filepath.Join(dir, "signing.key"), filepath.Join(dir, "signing.pub")
+	crash := &result.Crash{Kind: "heap-buffer-overflow", Signature: "A"}
+	fake := func(_ context.Context, o runner.Options) (*result.Result, error) {
+		if o.Commit == "" {
+			return &result.Result{State: result.ReproducedAsClaimed, Crash: crash, Inputs: result.Inputs{Project: "p", Commit: "aaaaaaaaaa"}}, nil
+		}
+		return &result.Result{State: result.NotReproduced, Inputs: result.Inputs{Project: "p", Commit: "bbbbbbbbbb"}}, nil
+	}
+	var out, errOut bytes.Buffer
+	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--fix", "bbbbbbb", "--sign-key", key, "r"}, &out, &errOut, fake); code != exitAsClaimed {
+		t.Fatalf("signed fix check exit %d: %s", code, errOut.String())
+	}
+	env, err := sign.Decode(out.Bytes())
+	if err != nil || env.PayloadType != sign.FixPayloadType {
+		t.Fatalf("envelope %+v, %v; want payload type %s", env, err, sign.FixPayloadType)
+	}
+
+	var o, e bytes.Buffer
+	if code := verifyCmd([]string{"--key", pub, "-"}, bytes.NewReader(out.Bytes()), &o, &e); code != 0 {
+		t.Fatalf("verify exit %d: %s", code, e.String())
+	}
+	var fc result.FixCheck
+	if err := json.Unmarshal(o.Bytes(), &fc); err != nil || fc.Fix != result.Fixed || fc.FixRun == nil || fc.FixRun.Inputs.Commit != "bbbbbbbbbb" {
+		t.Errorf("verified fix check %+v, %v", fc, err)
+	}
+	if !strings.Contains(e.String(), "fix check FIXED") || !strings.Contains(e.String(), "fix commit bbbbbbb") {
+		t.Errorf("verify summary: %s", e.String())
+	}
+
+	payload, _ := base64.StdEncoding.DecodeString(env.Payload)
+	forged := *env
+	forged.Payload = base64.StdEncoding.EncodeToString(bytes.Replace(payload, []byte(`"FIXED"`), []byte(`"NOT_FIXED"`), 1))
+	data, _ := json.Marshal(forged)
+	o.Reset()
+	if code := verifyCmd([]string{"--key", pub, "-"}, bytes.NewReader(data), &o, &bytes.Buffer{}); code != 1 || o.Len() != 0 {
+		t.Errorf("forged fix verdict: exit %d stdout %q", code, o.String())
+	}
+}

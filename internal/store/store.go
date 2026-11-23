@@ -97,6 +97,9 @@ type ReportInput struct {
 	IdempotencyKey string // optional, unique per Owner
 	ReproHash      string // optional
 	Dir            string // directory with repro.yaml and the reporter files
+	// FixCommit, when set, asks for a fix check: the worker also runs the
+	// report on this commit. Optional.
+	FixCommit string
 	// MaxPerHour, when above 0 and Owner is set, caps the reports Owner
 	// may create in any hour. A repeat of an existing IdempotencyKey does
 	// not count.
@@ -130,11 +133,11 @@ func (s *Store) CreateReport(ctx context.Context, in ReportInput) (reportID uuid
 	// the same time: the second insert waits for the first transaction and
 	// then inserts nothing.
 	err = tx.QueryRow(ctx, `
-		INSERT INTO reports (id, project, reporter, idempotency_key, repro_hash, dir, owner)
-		VALUES (coalesce($1::uuid, gen_random_uuid()), $2, nullif($3, ''), nullif($4, ''), nullif($5, ''), $6, nullif($7, ''))
+		INSERT INTO reports (id, project, reporter, idempotency_key, repro_hash, dir, owner, fix_commit)
+		VALUES (coalesce($1::uuid, gen_random_uuid()), $2, nullif($3, ''), nullif($4, ''), nullif($5, ''), $6, nullif($7, ''), nullif($8, ''))
 		ON CONFLICT ((coalesce(owner, '')), idempotency_key) DO NOTHING
 		RETURNING id`,
-		idArg, in.Project, in.Reporter, in.IdempotencyKey, in.ReproHash, in.Dir, in.Owner,
+		idArg, in.Project, in.Reporter, in.IdempotencyKey, in.ReproHash, in.Dir, in.Owner, in.FixCommit,
 	).Scan(&reportID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		tx.Rollback(ctx)
@@ -174,7 +177,8 @@ type Job struct {
 	ReportID       uuid.UUID
 	Project        string
 	Dir            string
-	Attempts       int // including this one
+	FixCommit      string // empty when the report asks for no fix check
+	Attempts       int    // including this one
 	MaxAttempts    int
 	LeaseExpiresAt time.Time
 }
@@ -250,9 +254,9 @@ func (s *Store) claimOnce(ctx context.Context, workerID string, lease time.Durat
 			updated_at = now()
 		FROM reports r
 		WHERE j.id = $1 AND r.id = j.report_id
-		RETURNING j.id, j.report_id, r.project, r.dir, j.attempts, j.max_attempts, j.lease_expires_at`,
+		RETURNING j.id, j.report_id, r.project, r.dir, coalesce(r.fix_commit, ''), j.attempts, j.max_attempts, j.lease_expires_at`,
 		id, workerID, lease.Seconds(),
-	).Scan(&j.ID, &j.ReportID, &j.Project, &j.Dir, &j.Attempts, &j.MaxAttempts, &j.LeaseExpiresAt)
+	).Scan(&j.ID, &j.ReportID, &j.Project, &j.Dir, &j.FixCommit, &j.Attempts, &j.MaxAttempts, &j.LeaseExpiresAt)
 	if err != nil {
 		return nil, false, err
 	}
@@ -291,12 +295,38 @@ func (s *Store) Complete(ctx context.Context, jobID int64, workerID string, res 
 // CompleteSigned is Complete that also stores envelope, the signed result,
 // byte for byte. A nil envelope stores none.
 func (s *Store) CompleteSigned(ctx context.Context, jobID int64, workerID string, res *result.Result, envelope []byte) error {
+	return s.CompleteJob(ctx, jobID, workerID, Outcome{Result: res, Envelope: envelope})
+}
+
+// Outcome is everything a finished job stores.
+type Outcome struct {
+	Result   *result.Result // required
+	Envelope []byte         // the signed result; nil when not signed
+	// Fix is the fix check, when the report asked for one.
+	Fix         *result.FixCheck
+	FixEnvelope []byte // the signed fix check; nil when not signed
+}
+
+// CompleteJob stores the outcome and marks the job done, in one
+// transaction. It returns ErrLeaseLost and writes nothing if workerID does
+// not hold the lease.
+func (s *Store) CompleteJob(ctx context.Context, jobID int64, workerID string, out Outcome) error {
+	res := out.Result
 	if res == nil {
 		return errors.New("store: nil result")
 	}
 	data, err := json.Marshal(res)
 	if err != nil {
 		return err
+	}
+	var fixState string
+	var fixData any
+	if out.Fix != nil {
+		b, err := json.Marshal(out.Fix)
+		if err != nil {
+			return err
+		}
+		fixState, fixData = string(out.Fix.Fix), json.RawMessage(jsonbSafe(b))
 	}
 	var signature, site string
 	if res.Crash != nil {
@@ -321,9 +351,10 @@ func (s *Store) CompleteSigned(ctx context.Context, jobID int64, workerID string
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO results (report_id, state, signature, site, result, envelope)
-		VALUES ($1, $2, nullif($3, ''), nullif($4, ''), $5, $6)`,
-		reportID, string(res.State), cleanText(signature), cleanText(site), json.RawMessage(jsonbSafe(data)), envelopeArg(envelope),
+		INSERT INTO results (report_id, state, signature, site, result, envelope, fix_state, fix, fix_envelope)
+		VALUES ($1, $2, nullif($3, ''), nullif($4, ''), $5, $6, nullif($7, ''), $8, $9)`,
+		reportID, string(res.State), cleanText(signature), cleanText(site), json.RawMessage(jsonbSafe(data)), envelopeArg(out.Envelope),
+		fixState, fixData, envelopeArg(out.FixEnvelope),
 	); err != nil {
 		return err
 	}
@@ -404,19 +435,24 @@ type Report struct {
 	LastError   string
 	Signature   string
 	Site        string
-	Result      *result.Result // nil until the job is done
-	Envelope    []byte         // the signed result; nil when not signed
+	Result      *result.Result   // nil until the job is done
+	Envelope    []byte           // the signed result; nil when not signed
+	FixCommit   string           // empty when no fix check was asked for
+	Fix         *result.FixCheck // nil until the job is done, or without FixCommit
+	FixEnvelope []byte           // the signed fix check; nil when not signed
 }
 
 // GetReport returns one report. It returns ErrNotFound if there is none.
 func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 	r := &Report{}
-	var raw []byte
-	var env *string
+	var raw, fixRaw []byte
+	var env, fixEnv *string
 	err := s.pool.QueryRow(ctx, `
 		SELECT r.id, r.project, coalesce(r.reporter, ''), coalesce(r.owner, ''), coalesce(r.repro_hash, ''), r.dir, r.created_at,
+			coalesce(r.fix_commit, ''),
 			coalesce(j.id, 0), coalesce(j.state, ''), coalesce(j.attempts, 0), coalesce(j.max_attempts, 0),
-			coalesce(j.last_error, ''), coalesce(res.signature, ''), coalesce(res.site, ''), res.result, res.envelope
+			coalesce(j.last_error, ''), coalesce(res.signature, ''), coalesce(res.site, ''), res.result, res.envelope,
+			res.fix, res.fix_envelope
 		FROM reports r
 		LEFT JOIN LATERAL (
 			SELECT * FROM jobs WHERE jobs.report_id = r.id ORDER BY jobs.id DESC LIMIT 1
@@ -424,8 +460,9 @@ func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 		LEFT JOIN results res ON res.report_id = r.id
 		WHERE r.id = $1`, id,
 	).Scan(&r.ID, &r.Project, &r.Reporter, &r.Owner, &r.ReproHash, &r.Dir, &r.CreatedAt,
+		&r.FixCommit,
 		&r.JobID, &r.JobState, &r.Attempts, &r.MaxAttempts,
-		&r.LastError, &r.Signature, &r.Site, &raw, &env)
+		&r.LastError, &r.Signature, &r.Site, &raw, &env, &fixRaw, &fixEnv)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -439,6 +476,15 @@ func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 		r.Result = &result.Result{}
 		if err := json.Unmarshal(raw, r.Result); err != nil {
 			return nil, fmt.Errorf("decode result: %w", err)
+		}
+	}
+	if fixEnv != nil {
+		r.FixEnvelope = []byte(*fixEnv)
+	}
+	if fixRaw != nil {
+		r.Fix = &result.FixCheck{}
+		if err := json.Unmarshal(fixRaw, r.Fix); err != nil {
+			return nil, fmt.Errorf("decode fix check: %w", err)
 		}
 	}
 	return r, nil

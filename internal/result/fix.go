@@ -17,6 +17,22 @@ const (
 	CannotTell FixState = "CANNOT_TELL"
 )
 
+// FixCheck is a fix check: the report run on its own commit and, when it
+// reproduced there, on the fix commit. It is what --fix prints as JSON and
+// what the service stores and signs.
+type FixCheck struct {
+	// ReportID is the service report this check is for; empty from the
+	// CLI. It is set before signing, like Result.ReportID.
+	ReportID string `json:"report_id,omitempty"`
+	// FixCommit is the fix commit as it was asked for. FixRun holds the
+	// full sha it resolved to.
+	FixCommit string   `json:"fix_commit"`
+	Fix       FixState `json:"fix"`
+	Reason    string   `json:"reason"`
+	Report    *Result  `json:"report"`            // on the report commit
+	FixRun    *Result  `json:"fix_run,omitempty"` // on the fix commit; absent when the report did not reproduce
+}
+
 // Reproduced reports whether every run of r crashed.
 func (r *Result) Reproduced() bool {
 	return r.State == ReproducedAsClaimed || r.State == ReproducedDifferent

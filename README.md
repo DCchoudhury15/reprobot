@@ -162,7 +162,9 @@ reason:    crashed on c9a5156, no crash on 71c2ab5
 `FIXED` means it crashed on the report commit and not on the fix.
 `NOT_FIXED` means it still crashes there. `CANNOT_TELL` means one side gave
 no usable answer, for example the report did not reproduce or the fix did
-not build. The exit code is `0` only for `FIXED`.
+not build. The exit code is `0` only for `FIXED`. With `--sign-key` the
+whole fix check is signed. The service does the same when a report is sent
+with a `fix_commit` field (see [docs/SERVICE.md](docs/SERVICE.md)).
 
 ## Run it as a service
 
@@ -200,7 +202,7 @@ Early. What works and what is next:
 - ✅ static claim check and loopback test servers
 - ✅ service with tokens, per-token access and rate limits
 - ✅ signed results
-- ✅ fix check (`--fix`)
+- ✅ fix check, in the CLI (`--fix`) and the service (`fix_commit`)
 - ⬜ OSS-Fuzz project import
 - ⬜ GitHub App for private vulnerability reports
 - ⬜ gVisor as the default sandbox

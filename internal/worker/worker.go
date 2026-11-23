@@ -122,11 +122,19 @@ func (w *Worker) process(ctx context.Context, owner string, job *store.Job) {
 		w.heartbeat(runCtx, cancel, owner, job.ID)
 	}()
 
-	res, err := w.Run(runCtx, runner.Options{
+	opts := runner.Options{
 		ProjectPath: filepath.Join(w.ProjectsDir, job.Project+".yaml"),
 		ReproPath:   filepath.Join(job.Dir, "repro.yaml"),
 		CacheDir:    w.CacheDir,
-	})
+	}
+	res, err := w.Run(runCtx, opts)
+	// A fix check runs in the same job and lease. If the fix run fails,
+	// the whole job is retried; the report run is cheap again thanks to
+	// the build cache.
+	var fix *result.FixCheck
+	if err == nil && res != nil && job.FixCommit != "" {
+		fix, err = runner.CheckFix(runCtx, w.Run, opts, res, job.FixCommit)
+	}
 	leaseLost := errors.Is(context.Cause(runCtx), store.ErrLeaseLost)
 	cancel(nil)
 	<-hbDone
@@ -149,11 +157,24 @@ func (w *Worker) process(ctx context.Context, owner string, job *store.Job) {
 		log.Warn("job failed", "err", "runner returned no result")
 		err = w.Store.Fail(sctx, job.ID, owner, "runner returned no result")
 	default:
-		log.Info("job done", "state", res.State)
 		res.ReportID = job.ReportID.String()
-		var env []byte
-		if env, err = w.envelope(res); err == nil {
-			err = w.Store.CompleteSigned(sctx, job.ID, owner, res, env)
+		out := store.Outcome{Result: res, Fix: fix}
+		if fix != nil {
+			fix.ReportID = res.ReportID
+			if fix.FixRun != nil {
+				fix.FixRun.ReportID = res.ReportID
+			}
+			log.Info("job done", "state", res.State, "fix", fix.Fix)
+		} else {
+			log.Info("job done", "state", res.State)
+		}
+		if out.Envelope, err = w.envelope(sign.PayloadType, res); err == nil {
+			if fix != nil {
+				out.FixEnvelope, err = w.envelope(sign.FixPayloadType, fix)
+			}
+		}
+		if err == nil {
+			err = w.Store.CompleteJob(sctx, job.ID, owner, out)
 		}
 	}
 	if err != nil {
@@ -161,16 +182,16 @@ func (w *Worker) process(ctx context.Context, owner string, job *store.Job) {
 	}
 }
 
-// envelope returns the signed result, or nil without a SignKey.
-func (w *Worker) envelope(res *result.Result) ([]byte, error) {
+// envelope returns v signed as payloadType, or nil without a SignKey.
+func (w *Worker) envelope(payloadType string, v any) ([]byte, error) {
 	if w.SignKey == nil {
 		return nil, nil
 	}
-	payload, err := json.Marshal(res)
+	payload, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(sign.Sign(w.SignKey, payload))
+	return json.Marshal(sign.SignAs(w.SignKey, payloadType, payload))
 }
 
 // heartbeat extends the lease every Lease/3 until ctx ends. When the lease

@@ -190,10 +190,20 @@ different crash) or `CANNOT_TELL` (the fix commit gave `BUILD_FAILED`,
 `CANNOT_TELL` too: a bug that crashes only sometimes cannot show that a fix
 works.
 
+In the service a report can carry a `fix_commit`. The worker runs both
+commits in one job, under one lease, and stores the fix check next to the
+result. If the fix run hits an infrastructure error the whole job is
+retried; the report run is then a build cache hit. A signed fix check has
+its own payload type (`application/vnd.reprobot.fix+json`), and the type is
+part of what is signed, so a signed fix check can never pass as a signed
+result or the other way round. It holds both runs, so it can be checked on
+its own.
+
 ## Later
 
-GitHub App for private vulnerability reports, OSS-Fuzz project import, fix
-checks in the service, bisect, an out-of-process crash check (see Fake
-reports), Firecracker. Built since this list was first written: the Postgres
-job queue with leases, the intake API with tokens and rate limits, the
-result page, signed results, and the fix check in the CLI (`run --fix`).
+GitHub App for private vulnerability reports, OSS-Fuzz project import,
+bisect, an out-of-process crash check (see Fake reports), Firecracker.
+Built since this list was first written: the Postgres job queue with
+leases, the intake API with tokens and rate limits, the result page, signed
+results, and the fix check in the CLI (`run --fix`) and the service
+(`fix_commit`).

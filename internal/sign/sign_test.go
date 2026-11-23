@@ -93,6 +93,27 @@ func TestSignVerify(t *testing.T) {
 	}
 }
 
+func TestFixPayloadType(t *testing.T) {
+	pub, priv := newKey(t)
+	payload := []byte(`{"fix":"FIXED"}`)
+	fix := SignAs(priv, FixPayloadType, payload)
+
+	// A signed fix check is not a signed result.
+	if _, err := Verify(fix, pub); err == nil {
+		t.Error("Verify took a fix check as a result")
+	}
+	got, err := VerifyAs(fix, pub, PayloadType, FixPayloadType)
+	if err != nil || string(got) != string(payload) {
+		t.Fatalf("VerifyAs = %q, %v", got, err)
+	}
+	// The type is signed: relabeling the envelope breaks it.
+	relabeled := *fix
+	relabeled.PayloadType = PayloadType
+	if _, err := VerifyAs(&relabeled, pub, PayloadType, FixPayloadType); !errors.Is(err, ErrNoValidSignature) {
+		t.Errorf("relabeled fix envelope: %v, want ErrNoValidSignature", err)
+	}
+}
+
 func TestDecodeRejects(t *testing.T) {
 	_, priv := newKey(t)
 	data, _ := json.Marshal(Sign(priv, []byte("{}")))

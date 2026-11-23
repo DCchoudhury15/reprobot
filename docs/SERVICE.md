@@ -97,6 +97,7 @@ reprobot worker \
 | `repro` | the `repro.yaml` (required) |
 | `file` | a reporter file, zero or more; stored next to `repro.yaml` under its own name |
 | `reporter` | optional name, at most 256 bytes |
+| `fix_commit` | optional commit hash or tag that claims to fix the bug; asks for a fix check (see below) |
 
 - Header `Idempotency-Key` is optional. Sending the same key again returns
   `200` with the ids of the first report and stores nothing.
@@ -105,6 +106,9 @@ reprobot worker \
   `repro.yaml`.
 - Only the `project` field of `repro.yaml` is checked here: it must name a
   file in `--projects`. The worker validates the rest.
+- `fix_commit` must be a commit hash or a tag name, the same rule as
+  `commit` in `repro.yaml`. Anything else (`HEAD~1`, `a..b`, a flag) gets
+  `400`.
 - Success is `202` with `{"report_id", "job_id", "status_url"}`. Errors are
   `{"error": "..."}` with status `400`, `401`, `413`, `429` or `500`.
 
@@ -125,12 +129,22 @@ shows as `inputs.reproducer_hash`: a hash of `repro.yaml` and the files it
 lists. Uploaded files it does not list are not mounted and not hashed. It is
 missing when `repro.yaml` is not valid; the result then says why.
 
+With a `fix_commit` the report also has `fix`: `commit` as sent, then,
+once the job is done, `state` (`FIXED`, `NOT_FIXED` or `CANNOT_TELL`),
+`reason`, `run` (the full result on the fix commit; absent when the report
+did not reproduce, because then the fix commit is not built) and `signed`.
+The verdicts are the same as `reprobot run --fix` (see Fix check in
+DESIGN.md).
+
 `GET /reports/{id}` is the same as an HTML page, with no JavaScript.
 
 `GET /v1/reports/{id}/signed` returns the signed result (see Signed results
 below), with the same access rules as the report. It is `404` when the
 report has no signed result. The report JSON has `"signed": true` when it
 has one.
+
+`GET /v1/reports/{id}/fix/signed` returns the signed fix check, with the
+same rules. It is `404` when the report has no signed fix check.
 
 `GET /v1/signing-key` returns the public key from `--sign-pub` as PEM. It
 needs no token, and is `404` when no key is set.
@@ -154,6 +168,15 @@ curl -s -H "Authorization: Bearer $REPROBOT_TOKEN" \
   http://127.0.0.1:8080/v1/reports/$ID/signed | reprobot verify --key signing.pub -
 ```
 
+A fix check is signed too, as one envelope that holds the report id, both
+runs and the verdict. `reprobot verify` checks either kind and says which
+it is:
+
+```sh
+curl -s -H "Authorization: Bearer $REPROBOT_TOKEN" \
+  http://127.0.0.1:8080/v1/reports/$ID/fix/signed | reprobot verify --key signing.pub -
+```
+
 Results finished before the worker had a key are not signed afterwards.
 
 The key is the only secret a worker holds, and the job sandbox runs on the
@@ -168,6 +191,8 @@ A job is `queued`, `running`, `done` or `failed`.
 - A worker claims a job with a lease and renews it every lease/3 while the
   job runs. If the worker dies, the lease expires and another worker takes
   the job. A worker that lost its lease cannot write a result.
+- A report with a `fix_commit` runs both commits in one job. A runner error
+  on either run retries the whole job.
 - A runner error (Docker down, disk full) puts the job back in the queue
   after a backoff of 1s * 2^attempts (2s, then 4s; at most 5 minutes). After
   3 attempts the job is `failed`. Bad input is not an error: it gives a

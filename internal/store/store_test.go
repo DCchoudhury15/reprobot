@@ -118,8 +118,8 @@ func TestMigrateConcurrentAndRepeated(t *testing.T) {
 	if err := stores[0].Migrate(ctx); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
-	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 5 {
-		t.Errorf("schema_migrations rows = %d, want 5", n)
+	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 6 {
+		t.Errorf("schema_migrations rows = %d, want 6", n)
 	}
 }
 
@@ -588,6 +588,55 @@ func TestCompleteStoresOutputWithNUL(t *testing.T) {
 	}
 	if got := rep.Result.Runs[0].StderrTail; got != "x�y" {
 		t.Errorf("stderr tail = %q, want NUL replaced", got)
+	}
+}
+
+func TestFixCheckStored(t *testing.T) {
+	st := storetest.New(t)
+	ctx := context.Background()
+	id, _, _, err := st.CreateReport(ctx, store.ReportInput{Project: "p", Dir: "/d", FixCommit: "v1.2.3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep, _ := st.GetReport(ctx, id); rep.FixCommit != "v1.2.3" || rep.Fix != nil {
+		t.Fatalf("before the run: fix commit %q, fix %+v", rep.FixCommit, rep.Fix)
+	}
+	job := claimEventually(t, st, "w", time.Minute)
+	if job.FixCommit != "v1.2.3" {
+		t.Fatalf("claimed job fix commit %q, want v1.2.3", job.FixCommit)
+	}
+	res := &result.Result{State: result.ReproducedAsClaimed, Inputs: result.Inputs{Commit: "aaaa"}}
+	fc := &result.FixCheck{
+		FixCommit: "v1.2.3", Fix: result.NotFixed, Reason: "still crashes", Report: res,
+		FixRun: &result.Result{State: result.ReproducedAsClaimed, Inputs: result.Inputs{Commit: "bbbb"},
+			Runs: []result.RunOutcome{{StderrTail: "x\x00y"}}},
+	}
+	if err := st.CompleteJob(ctx, job.ID, "w", store.Outcome{Result: res, Envelope: []byte(`{"r":1}`), Fix: fc, FixEnvelope: []byte(`{ "f" : 1 }`)}); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := st.GetReport(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Fix == nil || rep.Fix.Fix != result.NotFixed || rep.Fix.FixRun == nil || rep.Fix.FixRun.Inputs.Commit != "bbbb" {
+		t.Fatalf("fix check %+v", rep.Fix)
+	}
+	if got := rep.Fix.FixRun.Runs[0].StderrTail; got != "x\uFFFDy" {
+		t.Errorf("fix run stderr tail = %q, want NUL replaced", got)
+	}
+	// Envelopes are kept byte for byte.
+	if string(rep.FixEnvelope) != `{ "f" : 1 }` || string(rep.Envelope) != `{"r":1}` {
+		t.Errorf("envelopes %q %q", rep.Envelope, rep.FixEnvelope)
+	}
+	if got := count(t, st, "SELECT count(*) FROM results WHERE fix_state = 'NOT_FIXED'"); got != 1 {
+		t.Errorf("fix_state rows = %d, want 1", got)
+	}
+
+	// A report without a fix commit stores no fix check.
+	id2, _ := newReport(t, st, "p")
+	finish(t, st, id2, res)
+	if rep, _ := st.GetReport(ctx, id2); rep.FixCommit != "" || rep.Fix != nil || rep.FixEnvelope != nil {
+		t.Errorf("report without fix: %q %+v %q", rep.FixCommit, rep.Fix, rep.FixEnvelope)
 	}
 }
 

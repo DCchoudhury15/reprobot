@@ -20,9 +20,9 @@ to "reprobot run --sign-key" and publish the public key, so others can run
 
 const verifyUsage = `usage: reprobot verify --key signing.pub ENVELOPE
 
-Checks a signed result (a file, or - for stdin). When the signature is
-good it prints the result JSON to stdout and a summary to stderr, and exits
-0. Otherwise it exits 1.`
+Checks a signed result or a signed fix check (a file, or - for stdin).
+When the signature is good it prints the signed JSON to stdout and a
+summary to stderr, and exits 0. Otherwise it exits 1.`
 
 func writeIndented(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
@@ -81,20 +81,32 @@ func verifyCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	payload, err := sign.Verify(env, pub)
+	payload, err := sign.VerifyAs(env, pub, sign.PayloadType, sign.FixPayloadType)
 	if err != nil {
 		return fail(err)
 	}
-	var res result.Result
-	if err := json.Unmarshal(payload, &res); err != nil {
-		return fail(fmt.Errorf("signed payload is not a result: %w", err))
+	var summary string
+	if env.PayloadType == sign.FixPayloadType {
+		var fc result.FixCheck
+		if err := json.Unmarshal(payload, &fc); err != nil || fc.Report == nil {
+			return fail(fmt.Errorf("signed payload is not a fix check: %v", err))
+		}
+		in := fc.Report.Inputs
+		summary = fmt.Sprintf("fix check %s: %s for %s, report commit %s, fix commit %s (profile %s, reproducer %s)",
+			fc.Fix, fc.Reason, in.Project, in.Commit, fc.FixCommit, in.Profile, in.ReproducerHash)
+	} else {
+		var res result.Result
+		if err := json.Unmarshal(payload, &res); err != nil {
+			return fail(fmt.Errorf("signed payload is not a result: %w", err))
+		}
+		in := res.Inputs
+		summary = fmt.Sprintf("%s for %s at %s (profile %s, reproducer %s)",
+			res.State, in.Project, in.Commit, in.Profile, in.ReproducerHash)
 	}
 	if _, err := stdout.Write(payload); err != nil {
 		return fail(err)
 	}
 	fmt.Fprintln(stdout)
-	in := res.Inputs
-	fmt.Fprintf(stderr, "good signature by key %s\n%s for %s at %s (profile %s, reproducer %s)\n",
-		sign.KeyID(pub), res.State, in.Project, in.Commit, in.Profile, in.ReproducerHash)
+	fmt.Fprintf(stderr, "good signature by key %s\n%s\n", sign.KeyID(pub), summary)
 	return 0
 }

@@ -20,11 +20,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 )
 
-// PayloadType is the DSSE payload type of a signed result.
-const PayloadType = "application/vnd.reprobot.result+json"
+// Payload types. A fix check has its own type, so a signed fix check can
+// never be taken for a signed result or the other way round.
+const (
+	// PayloadType is the DSSE payload type of a signed result.
+	PayloadType = "application/vnd.reprobot.result+json"
+	// FixPayloadType is the DSSE payload type of a signed fix check.
+	FixPayloadType = "application/vnd.reprobot.fix+json"
+)
 
 // Envelope is a DSSE envelope.
 type Envelope struct {
@@ -64,15 +71,21 @@ func pae(payloadType string, payload []byte) []byte {
 	return b.Bytes()
 }
 
-// Sign wraps payload in an envelope signed with key.
+// Sign wraps a result payload in an envelope signed with key.
 func Sign(key ed25519.PrivateKey, payload []byte) *Envelope {
+	return SignAs(key, PayloadType, payload)
+}
+
+// SignAs wraps payload in an envelope of payloadType signed with key. The
+// type is part of what is signed.
+func SignAs(key ed25519.PrivateKey, payloadType string, payload []byte) *Envelope {
 	pub := key.Public().(ed25519.PublicKey)
 	return &Envelope{
-		PayloadType: PayloadType,
+		PayloadType: payloadType,
 		Payload:     base64.StdEncoding.EncodeToString(payload),
 		Signatures: []Signature{{
 			KeyID: KeyID(pub),
-			Sig:   base64.StdEncoding.EncodeToString(ed25519.Sign(key, pae(PayloadType, payload))),
+			Sig:   base64.StdEncoding.EncodeToString(ed25519.Sign(key, pae(payloadType, payload))),
 		}},
 	}
 }
@@ -81,11 +94,17 @@ func Sign(key ed25519.PrivateKey, payload []byte) *Envelope {
 // given key.
 var ErrNoValidSignature = errors.New("sign: no valid signature for this key")
 
-// Verify returns the payload when one signature of env verifies with pub.
-// The key id is only a hint: every signature is checked against pub.
+// Verify returns the payload of a signed result when one signature of env
+// verifies with pub. The key id is only a hint: every signature is checked
+// against pub.
 func Verify(env *Envelope, pub ed25519.PublicKey) ([]byte, error) {
-	if env.PayloadType != PayloadType {
-		return nil, fmt.Errorf("sign: payload type %q, want %q", env.PayloadType, PayloadType)
+	return VerifyAs(env, pub, PayloadType)
+}
+
+// VerifyAs is Verify for an envelope whose payload type is one of types.
+func VerifyAs(env *Envelope, pub ed25519.PublicKey, types ...string) ([]byte, error) {
+	if !slices.Contains(types, env.PayloadType) {
+		return nil, fmt.Errorf("sign: payload type %q, want one of %q", env.PayloadType, types)
 	}
 	payload, err := base64.StdEncoding.DecodeString(env.Payload)
 	if err != nil {

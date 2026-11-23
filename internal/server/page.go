@@ -54,6 +54,15 @@ pre { background: #f4f4f4; padding: .5rem; overflow-x: auto; white-space: pre-wr
 {{else}}
 <p>No result yet.</p>
 {{end}}
+{{with .Fix}}
+<h2>Fix check: {{if .State}}{{.State}}{{else}}not run yet{{end}}</h2>
+{{if .Reason}}<p>{{.Reason}}</p>{{end}}
+<table>
+<tr><th>Fix commit</th><td><code>{{.Commit}}</code>{{$asked := .Commit}}{{with .Run}}{{if ne .Inputs.Commit $asked}} (<code>{{.Inputs.Commit}}</code>){{end}}{{end}}</td></tr>
+{{with .Run}}<tr><th>On the fix commit</th><td>{{.State}}, {{.Crashed}} of {{len .Runs}} runs crashed</td></tr>{{end}}
+</table>
+{{if .Signed}}<p><a href="/v1/reports/{{$.ReportID}}/fix/signed">Signed fix check</a>, check it the same way as the signed result.</p>{{end}}
+{{end}}
 {{with .Crash}}
 <h2>Crash</h2>
 <table>
