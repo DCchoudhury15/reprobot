@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DCchoudhury15/reprobot/internal/spec"
@@ -154,12 +155,31 @@ func helperContainerName() (string, error) {
 	return "reprobot-" + hex.EncodeToString(b) + "-helper", nil
 }
 
-// ensureReplayBin builds the static replay binary if it does not exist.
-// The binary is stored in cacheDir/bin/reprobot-replay.
+// ensureReplayBin builds the static replay binary.
 func ensureReplayBin(ctx context.Context, cacheDir string) (string, error) {
+	return ensureBin(ctx, cacheDir, helperBinName, "./cmd/reprobot-replay/")
+}
+
+// ensureWatchBin builds the static crash check binary.
+func ensureWatchBin(ctx context.Context, cacheDir string) (string, error) {
+	return ensureBin(ctx, cacheDir, "reprobot-watch", "./cmd/reprobot-watch/")
+}
+
+// built records the binaries this process has built, so each is built once
+// per process. A binary left by an older reprobot is never reused: the
+// crash check must match the code that reads its verdict.
+var built = struct {
+	sync.Mutex
+	m map[string]bool
+}{m: map[string]bool{}}
+
+// ensureBin builds a static binary of pkg into cacheDir/bin/name.
+func ensureBin(ctx context.Context, cacheDir, name, pkg string) (string, error) {
 	binDir := filepath.Join(cacheDir, "bin")
-	bin := filepath.Join(binDir, helperBinName)
-	if st, err := os.Stat(bin); err == nil && st.Mode().IsRegular() {
+	bin := filepath.Join(binDir, name)
+	built.Lock()
+	defer built.Unlock()
+	if built.m[bin] {
 		return bin, nil
 	}
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -167,7 +187,7 @@ func ensureReplayBin(ctx context.Context, cacheDir string) (string, error) {
 	}
 
 	// Build with CGO_ENABLED=0 for a static binary that runs in any container.
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/reprobot-replay/")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", bin, pkg)
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	// Build from the module root. Find it by looking for go.mod.
 	modRoot, err := findModRoot()
@@ -177,8 +197,9 @@ func ensureReplayBin(ctx context.Context, cacheDir string) (string, error) {
 	cmd.Dir = modRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("go build reprobot-replay: %w\n%s", err, out)
+		return "", fmt.Errorf("go build %s: %w\n%s", name, err, out)
 	}
+	built.m[bin] = true
 	return bin, nil
 }
 

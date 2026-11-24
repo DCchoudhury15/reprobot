@@ -110,6 +110,7 @@ from stdout or stderr. A crash counts only when all of these hold:
 - 🔒 the command is a program the maintainers build, not a script from the report
 - 🗝️ the sanitizer writes its report into a log directory that is secret and new for every run
 - 🎲 the program exits with an exit code that is also secret and new for every run
+- 👀 a watcher outside the program (ptrace, as PID 1 of the run container) sees the exit come from the sanitizer runtime, not from `exit()` in libc, and the report is in the log file of the program's own pid
 
 Before anything is built, a static check also looks for the functions, files
 and `file:line` references the report names, in the code at that commit.

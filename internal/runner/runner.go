@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -24,6 +26,7 @@ import (
 	"github.com/DCchoudhury15/reprobot/internal/sanitizer"
 	"github.com/DCchoudhury15/reprobot/internal/source"
 	"github.com/DCchoudhury15/reprobot/internal/spec"
+	"github.com/DCchoudhury15/reprobot/internal/watch"
 )
 
 // Options for one check.
@@ -57,8 +60,15 @@ const (
 // sanitizer through log_path, and a random sanitizer exitcode. A crash
 // counts only when a report file exists in that subdir and the exit code
 // matches.
+//
+// A program whose input is code could read both secrets from its
+// environment. So the run starts under reprobot-watch (package watch),
+// which checks from outside the process that the program ended in the
+// sanitizer runtime. A crash also needs that check to pass, and the report
+// file must be the one the sanitizer names after the program's pid.
 const (
 	RunOutDir        = RunWorkDir + "/out"
+	WatchPath        = "/reprobot-watch"
 	MaxReportBytes   = 1 << 20
 	minSanitizerExit = 64
 	sanitizerExits   = 57 // exit codes 64 to 120
@@ -79,6 +89,7 @@ type deps struct {
 	parse          func(stderr string) *result.Crash
 	compare        func(c spec.Claim, crash *result.Crash) (bool, []string)
 	secret         func() (token string, exitCode int, err error)
+	watchBin       func(ctx context.Context, cacheDir string) (string, error)
 	sourceLine     func(ctx context.Context, mirrorDir, sha, rel string, n int) (string, error)
 }
 
@@ -100,6 +111,7 @@ func realDeps() deps {
 		parse:      sanitizer.Parse,
 		compare:    claim.Compare,
 		secret:     newSecret,
+		watchBin:   ensureWatchBin,
 		sourceLine: source.Line,
 	}
 }
@@ -192,6 +204,11 @@ func run(ctx context.Context, o Options, d deps) (*result.Result, error) {
 		return nil, fmt.Errorf("runner: copy reporter files: %w", err)
 	}
 	s := runSpec(project, repro, out.BinDir, pocDir)
+	wbin, err := d.watchBin(ctx, cacheDir)
+	if err != nil {
+		return nil, fmt.Errorf("runner: crash check: %w", err)
+	}
+	s.Mounts = append(s.Mounts, sandbox.Mount{Source: wbin, Target: WatchPath, ReadOnly: true})
 
 	// If the reproducer uses loopback servers, start a helper container
 	// that runs the replay servers. The program container shares its
@@ -648,9 +665,10 @@ func makeOutDir(cacheDir, token string) (string, error) {
 	return dir, os.Chmod(sub, 0o733|os.ModeSetgid)
 }
 
-// withReportChannel returns a copy of s that mounts outDir and points the
-// sanitizers at the secret log dir and exit code. Our options come last,
-// so they win over the same options in the profile env.
+// withReportChannel returns a copy of s that mounts outDir, points the
+// sanitizers at the secret log dir and exit code, and runs the command
+// under reprobot-watch. Our options come last, so they win over the same
+// options in the profile env.
 func withReportChannel(s sandbox.Spec, outDir, token string, code int) sandbox.Spec {
 	env := make(map[string]string, len(s.Env)+2)
 	for k, v := range s.Env {
@@ -661,6 +679,7 @@ func withReportChannel(s sandbox.Spec, outDir, token string, code int) sandbox.S
 	env["ASAN_OPTIONS"] = joinOpts(env["ASAN_OPTIONS"], "log_path="+logDir+"/asan:"+common)
 	env["UBSAN_OPTIONS"] = joinOpts(env["UBSAN_OPTIONS"], "log_path="+logDir+"/ubsan:"+common)
 	s.Env = env
+	s.Cmd = append([]string{WatchPath, "-code", strconv.Itoa(code), "-out", logDir, "--"}, s.Cmd...)
 	s.Mounts = append(append([]sandbox.Mount(nil), s.Mounts...), sandbox.Mount{Source: outDir, Target: RunOutDir})
 	return s
 }
@@ -673,36 +692,88 @@ func joinOpts(base, extra string) string {
 	return base + ":" + extra
 }
 
-// collectReport reads the sanitizer log files of one run. A crash counts
-// only when a log file holds a sanitizer report and the exit code is the
-// secret one. note explains a report that was not counted.
+// collectReport reads the sanitizer log files and the watcher's verdict of
+// one run. A crash counts only when the exit code is the secret one, the
+// watcher saw the program end in the sanitizer runtime, and the report is
+// in the log file named after the program's pid. note explains a report
+// that was not counted. An error from the watcher itself is an error.
 func collectReport(outDir, token string, want, exit int, parse func(string) *result.Crash) (crash *result.Crash, report, note string, err error) {
 	sub := filepath.Join(outDir, token)
 	entries, err := os.ReadDir(sub) // sorted by name
 	if err != nil {
 		return nil, "", "", fmt.Errorf("read report dir: %w", err)
 	}
+	v, err := readVerdict(sub)
+	if err != nil {
+		return nil, "", "", err
+	}
 	var notes []string
 	files := 0
+	fromProgram := false
 	for _, e := range entries {
+		if e.Name() == watch.FileName {
+			continue
+		}
 		b, why := readReport(filepath.Join(sub, e.Name()))
 		if why != "" {
 			notes = append(notes, why)
 			continue
 		}
 		files++
-		if c := parse(string(b)); c != nil && crash == nil {
-			crash, report = c, string(b)
+		c := parse(string(b))
+		if c == nil {
+			continue
+		}
+		// Prefer the program's own log file over any other.
+		if own := v != nil && logOf(e.Name(), v.Pid); crash == nil || (own && !fromProgram) {
+			crash, report, fromProgram = c, string(b), own
 		}
 	}
-	if crash != nil && exit != want {
+	switch {
+	case crash == nil:
+	case exit != want:
 		notes = append(notes, fmt.Sprintf("a sanitizer report was written but the exit code was %d, not the sanitizer exit code, so it was not counted", exit))
+		crash, report = nil, ""
+	case v == nil:
+		notes = append(notes, "a sanitizer report was written but the crash check did not finish, so it was not counted")
+		crash, report = nil, ""
+	case !v.SanitizerExit:
+		notes = append(notes, "a sanitizer report was written but "+v.Why+", so it was not counted")
+		crash, report = nil, ""
+	case !fromProgram:
+		notes = append(notes, fmt.Sprintf("a sanitizer report was written, but not in the log file of the program (pid %d), so it was not counted", v.Pid))
 		crash, report = nil, ""
 	}
 	if crash == nil && files > 0 && len(notes) == 0 {
 		notes = append(notes, "the sanitizer wrote a log file without a crash report")
 	}
 	return crash, report, strings.Join(notes, "; "), nil
+}
+
+// readVerdict reads the watcher's verdict. It is nil when there is none,
+// for example when the run was killed at the time limit.
+func readVerdict(dir string) (*watch.Verdict, error) {
+	b, why := readReport(filepath.Join(dir, watch.FileName))
+	if why != "" {
+		return nil, nil
+	}
+	var v watch.Verdict
+	if err := json.Unmarshal(b, &v); err != nil {
+		return nil, nil
+	}
+	if v.Error != "" {
+		return nil, fmt.Errorf("crash check: %s", v.Error)
+	}
+	return &v, nil
+}
+
+// logOf says whether a log file name is the one a sanitizer gives the
+// process pid: <log_path>.<pid>, where log_path ends in asan or ubsan.
+func logOf(name string, pid int) bool {
+	if pid <= 0 || !strings.HasSuffix(name, "."+strconv.Itoa(pid)) {
+		return false
+	}
+	return strings.HasPrefix(name, "asan.") || strings.HasPrefix(name, "ubsan.")
 }
 
 // readReport reads one log file. It never follows symlinks and never

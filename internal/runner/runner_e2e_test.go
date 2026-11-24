@@ -200,6 +200,15 @@ const extraProfiles = `  echo:
     build: |
       printf '#!/bin/sh\nexec sleep 100\n' > hang && chmod 755 hang
     outputs: [hang]
+  script:
+    build: |
+      printf '#!/bin/sh\n. "$1"\n' > interp && chmod 755 interp
+    outputs: [interp]
+  asan-static:
+    build: make CFLAGS="-fsanitize=address -static-libasan -g -O1 -fno-omit-frame-pointer"
+    outputs: [tinyparse]
+    env:
+      ASAN_OPTIONS: detect_leaks=0:symbolize=1
 limits:`
 
 // fakeReport writes a real captured ASan report for this bug next to the
@@ -270,5 +279,58 @@ func TestE2ETimeout(t *testing.T) {
 	// Without the limit the three runs alone would take 300 seconds.
 	if d := time.Since(start); d > 3*time.Minute {
 		t.Errorf("took %v; the 2 second limit was not enforced", d)
+	}
+}
+
+// fakeScript is a reporter "program" for an interpreter. It does what any
+// code with file access can do: read the secret log dir and exit code from
+// ASAN_OPTIONS, write a real captured report there under its own pid, and
+// exit with the code.
+const fakeScript = `opts=$(printf '%s' "$ASAN_OPTIONS" | tr ':' '\n')
+log=$(printf '%s\n' "$opts" | grep '^log_path=' | tail -n 1 | cut -d= -f2)
+code=$(printf '%s\n' "$opts" | grep '^exitcode=' | tail -n 1 | cut -d= -f2)
+cat poc/report.txt > "$log.$$"
+exit "$code"
+`
+
+// A profile whose input is code (here a shell "interpreter") lets the
+// input forge the report channel. The watcher must see that the exit came
+// from libc, not from the sanitizer. The Fix commit has no bug at all.
+func TestE2EScriptForgedReportIsCaught(t *testing.T) {
+	f := testutil.NewTinyparseRepo(t)
+	res := check(t, f.RepoDir, t.TempDir(), f.Fix, func(project, repro string) {
+		edit(t, project, "limits:", extraProfiles)
+		fakeReport(t, repro)
+		if err := os.WriteFile(filepath.Join(filepath.Dir(repro), "fake.sh"), []byte(fakeScript), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		edit(t, repro, "  - input.bin", "  - input.bin\n  - fake.sh")
+		edit(t, repro, "profile: asan", "profile: script")
+		edit(t, repro, `cmd: ["bin/tinyparse", "poc/input.bin"]`, `cmd: ["bin/interp", "poc/fake.sh"]`)
+	})
+	wantState(t, res, result.NotReproduced)
+	for i, r := range res.Runs {
+		if r.ExitCode < 64 || r.ExitCode > 120 {
+			t.Fatalf("run %d exited %d, not with the sanitizer exit code, so this test proves nothing: %+v", i, r.ExitCode, r)
+		}
+		if !strings.Contains(r.Note, "a sanitizer report was written but exit_group was called from") ||
+			!strings.Contains(r.Note, "libc") {
+			t.Errorf("run %d note = %q", i, r.Note)
+		}
+	}
+}
+
+// clang links the sanitizer runtime into the program; GCC does with
+// -static-libasan. The watcher then finds __sanitizer::internal__exit by
+// its symbol.
+func TestE2EStaticRuntime(t *testing.T) {
+	f := testutil.NewTinyparseRepo(t)
+	res := check(t, f.RepoDir, t.TempDir(), f.Vuln, func(project, repro string) {
+		edit(t, project, "limits:", extraProfiles)
+		edit(t, repro, "profile: asan", "profile: asan-static")
+	})
+	wantState(t, res, result.ReproducedAsClaimed)
+	if res.Crashed != 3 {
+		t.Errorf("crashed %d of 3 runs", res.Crashed)
 	}
 }

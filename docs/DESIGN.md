@@ -130,32 +130,69 @@ A crash counts only when a report file exists in the secret subdir and the
 exit code equals the secret one. Log files are opened without following
 symlinks and without blocking on FIFOs, because the run user owns them.
 
-### What this does not cover
+### The crash check from outside the process
 
 The secret log dir and exit code reach the sanitizer through the
-environment, so the program under test can read them too. This is fine for
-programs that only parse the reporter's input (`xmllint`, image decoders,
-most fuzz targets): the input cannot run code, it can only be echoed. It
-does not hold for targets where the input is a program, such as an
-interpreter that can read files or call native code. A script there can
-read the options, write a fake report into the secret dir and exit with
-the secret code.
+environment, so the program under test can read them too. That does not
+matter for programs that only parse the reporter's input (`xmllint`, image
+decoders, most fuzz targets): the input cannot run code, it can only be
+echoed. It does matter when the input is a program, such as a script for an
+interpreter: the script can read the options, write a fake report into the
+secret dir and exit with the secret code.
 
-Hiding the options after start-up was tried (a preloaded library that
-removes them from the environment once the sanitizer has read them):
+So every run starts under `reprobot-watch` (`cmd/reprobot-watch`,
+`internal/watch`), a small static binary mounted read-only into the run
+container as PID 1. It starts the command as a ptrace child and stops each
+thread of the program as it exits. A sanitizer ends a process from its own
+runtime: `__sanitizer::internal__exit` calls `exit_group` with the exitcode.
+At the exit stop the watcher reads the registers and the memory map and
+checks:
 
-- it works for ASan, which reads its options before any program code runs;
-- it breaks UBSan, which reads its options at the first report, so the
-  report and exit code are lost;
-- it does not stop a script from reading `/proc/self/mem`, or from calling
-  the sanitizer's own report function through an FFI, which gives a real
-  report with real frames.
+- the call is `exit_group`, from a thread of the program, with the secret
+  exit code;
+- the instruction is in a shared sanitizer runtime (`libasan.so`,
+  `libubsan.so`, `libclang_rt.asan-*.so`, ...), or in a function of the
+  `__sanitizer` namespace inside the program (a static runtime, found by
+  its ELF symbol);
+- the code is not mapped from a place the program can write to (`/tmp`,
+  `/dev/shm`, the out dir, the reporter files) or from a deleted file.
 
-Any check that runs inside the same process can be copied by code running
-in that process. So reprobot does not support profiles whose input is code
-with file or native access, and a maintainer should not add one. Checking
-such targets needs a check from outside the process (for example ptrace),
-which is future work.
+Once the program has exited the watcher kills every process left, then
+writes its verdict (`watch.json`: pid, exit status, whether the exit came
+from the sanitizer, and why) into the secret dir, removing any file the
+program planted under that name. A crash then also needs the verdict to say
+it came from the sanitizer, and the report must be in `asan.<pid>` or
+`ubsan.<pid>` for the program's own pid. With no verdict (the run was
+killed at the time limit) a report is not counted. If the watcher itself
+fails (ptrace not allowed) the run is an infrastructure error, not a
+verdict.
+
+The program cannot change the verdict: it cannot kill PID 1 of its pid
+namespace (the kernel drops such signals, and the watcher takes every
+catchable one), it cannot read or write the watcher's memory (the watcher
+makes itself non-dumpable), and the verdict is written only when no other
+process is left. Before the watcher, a script that forged a report gave
+`REPRODUCED_AS_CLAIMED` on a commit with no bug; `TestE2EScriptForgedReportIsCaught`
+now gives `NOT_REPRODUCED`, with the note "exit_group was called from _exit
+in .../libc.so.6".
+
+### What this does not cover
+
+A program that can run native code (an FFI, loading a shared library it
+wrote) can call the sanitizer's own report function and get a real report
+with a real exit from the runtime. No check, inside or outside the process,
+can tell that from a real crash, because it is one. So profiles whose input
+can run native code are still not supported, and a maintainer should not
+add one.
+
+Hiding the options after start-up was also tried (a preloaded library that
+removes them from the environment once the sanitizer has read them). It
+breaks UBSan, which reads its options at the first report, so the report
+and exit code are lost.
+
+The watcher reads registers for linux/amd64 only. On other platforms it
+reports an error and the run fails rather than giving a verdict. It has not
+been tried under gVisor (`runsc`), which implements ptrace itself.
 
 ## Sandbox
 
@@ -202,8 +239,9 @@ its own.
 ## Later
 
 GitHub App for private vulnerability reports, OSS-Fuzz project import,
-bisect, an out-of-process crash check (see Fake reports), Firecracker.
+bisect, Firecracker.
 Built since this list was first written: the Postgres job queue with
 leases, the intake API with tokens and rate limits, the result page, signed
-results, and the fix check in the CLI (`run --fix`) and the service
-(`fix_commit`).
+results, the fix check in the CLI (`run --fix`) and the service
+(`fix_commit`), and the crash check from outside the process
+(`reprobot-watch`).

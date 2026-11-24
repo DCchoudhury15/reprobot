@@ -17,6 +17,7 @@ import (
 	"github.com/DCchoudhury15/reprobot/internal/sandbox"
 	"github.com/DCchoudhury15/reprobot/internal/source"
 	"github.com/DCchoudhury15/reprobot/internal/spec"
+	"github.com/DCchoudhury15/reprobot/internal/watch"
 )
 
 func crashOf(kind, sig string) *result.Crash {
@@ -185,10 +186,17 @@ type fake struct {
 	buildOut  build.Output
 	outcomes  []sandbox.Outcome // one per run
 	reports   []string          // sanitizer log file each run writes ("" = none)
+	// verdicts is the watch.json each run writes. A missing entry means
+	// the watcher saw pid 1 end in the sanitizer when there is a report,
+	// and a plain exit when there is none; "-" means no file.
+	verdicts []string
+	// reportName is the log file name the reports go to (default asan.1).
+	reportName string
 
 	loadReproErr, loadProjectErr, checkErr, filePathsErr, hashErr error
 	filePathsOverride                                             []string
 	resolveErr, claimCheckErr, buildErr, runtimeErr, runErr       error
+	watchErr                                                      error
 
 	calls    []string
 	specs    []sandbox.Spec
@@ -314,8 +322,23 @@ func (f *fake) deps() deps {
 			out := mountSource(t, s, "/work/out")
 			f.outDirs = append(f.outDirs, out)
 			// Act like the sanitizer: write the report to the secret log dir.
-			if i < len(f.reports) && f.reports[i] != "" {
-				if err := os.WriteFile(filepath.Join(out, "tok", "asan.1"), []byte(f.reports[i]), 0o640); err != nil {
+			reported := i < len(f.reports) && f.reports[i] != ""
+			if reported {
+				name := f.reportName
+				if name == "" {
+					name = "asan.1"
+				}
+				if err := os.WriteFile(filepath.Join(out, "tok", name), []byte(f.reports[i]), 0o640); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Act like reprobot-watch.
+			verdict := fmt.Sprintf(`{"pid":1,"status":%d,"sanitizer_exit":%v}`, f.outcomes[i].ExitCode, reported)
+			if i < len(f.verdicts) {
+				verdict = f.verdicts[i]
+			}
+			if verdict != "-" {
+				if err := os.WriteFile(filepath.Join(out, "tok", watch.FileName), []byte(verdict), 0o640); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -331,6 +354,10 @@ func (f *fake) deps() deps {
 			return crash.Kind == c.Kind, []string{"compare finding"}
 		},
 		secret: func() (string, int, error) { return "tok", 77, nil },
+		watchBin: func(ctx context.Context, cacheDir string) (string, error) {
+			f.calls = append(f.calls, "watchBin")
+			return "/cache/bin/reprobot-watch", f.watchErr
+		},
 	}
 }
 
@@ -446,7 +473,7 @@ func TestRunReproduced(t *testing.T) {
 	pocDir := f.specs[0].Mounts[1].Source
 	want := sandbox.Spec{
 		Image: "gcc:15",
-		Cmd:   []string{"bin/tinyparse", "poc/input.bin"},
+		Cmd:   []string{"/reprobot-watch", "-code", "77", "-out", "/work/out/tok", "--", "bin/tinyparse", "poc/input.bin"},
 		User:  "65534:65534",
 		Env: map[string]string{
 			"ASAN_OPTIONS":  "detect_leaks=0:log_path=/work/out/tok/asan:exitcode=77:abort_on_error=0",
@@ -456,6 +483,7 @@ func TestRunReproduced(t *testing.T) {
 		Mounts: []sandbox.Mount{
 			{Source: f.binDir, Target: "/work/bin", ReadOnly: true},
 			{Source: pocDir, Target: "/work/poc", ReadOnly: true},
+			{Source: "/cache/bin/reprobot-watch", Target: "/reprobot-watch", ReadOnly: true},
 			{Target: "/work/out"},
 		},
 		Network:      false,
@@ -467,7 +495,7 @@ func TestRunReproduced(t *testing.T) {
 		TmpfsMB:      64,
 	}
 	for i, s := range f.specs {
-		want.Mounts[2].Source = f.outDirs[i]
+		want.Mounts[3].Source = f.outDirs[i]
 		if !reflect.DeepEqual(s, want) {
 			t.Errorf("run %d spec:\n got %+v\nwant %+v", i, s, want)
 		}
@@ -858,8 +886,11 @@ func TestWithReportChannelOptionsComeLast(t *testing.T) {
 	if got.Env["UBSAN_OPTIONS"] != "log_path=/work/out/tok/ubsan:exitcode=99:abort_on_error=0" {
 		t.Errorf("UBSAN_OPTIONS = %q", got.Env["UBSAN_OPTIONS"])
 	}
-	if len(s.Env) != 1 || len(s.Mounts) != 1 {
+	if len(s.Env) != 1 || len(s.Mounts) != 1 || len(s.Cmd) != 0 {
 		t.Error("withReportChannel changed the shared spec")
+	}
+	if want := []string{"/reprobot-watch", "-code", "99", "-out", "/work/out/tok", "--"}; !reflect.DeepEqual(got.Cmd, want) {
+		t.Errorf("Cmd = %q, want %q", got.Cmd, want)
 	}
 	m := got.Mounts[len(got.Mounts)-1]
 	if m.Source != "/out" || m.Target != "/work/out" || m.ReadOnly {
@@ -982,5 +1013,108 @@ func TestRepoPath(t *testing.T) {
 		if got != want || ok != (want != "") {
 			t.Errorf("repoPath(%q) = %q, %v; want %q", in, got, ok, want)
 		}
+	}
+}
+
+// A program whose input is code can read the secret log dir and exit code
+// from its environment, write a report and exit with the code. The watcher
+// sees that the exit did not come from the sanitizer, so it is not a crash.
+func TestRunNeedsSanitizerExit(t *testing.T) {
+	f := newFake(t)
+	v := `{"pid":1,"status":77,"sanitizer_exit":false,"why":"exit_group was called from _exit in /usr/lib/libc.so.6, not from the sanitizer runtime"}`
+	f.verdicts = []string{v, v, v}
+	res := f.run(t)
+	if res.State != result.NotReproduced || res.Crashed != 0 || res.Crash != nil {
+		t.Errorf("got %s, crashed %d, crash %+v", res.State, res.Crashed, res.Crash)
+	}
+	if !strings.Contains(res.Runs[0].Note, "exit_group was called from _exit in /usr/lib/libc.so.6") {
+		t.Errorf("note = %q", res.Runs[0].Note)
+	}
+}
+
+// Without a verdict (the watcher was killed) a report is not counted.
+func TestRunNeedsVerdict(t *testing.T) {
+	f := newFake(t)
+	f.verdicts = []string{"-", "-", "-"}
+	res := f.run(t)
+	if res.State != result.NotReproduced || res.Crashed != 0 {
+		t.Errorf("got %s, crashed %d", res.State, res.Crashed)
+	}
+	if !strings.Contains(res.Runs[0].Note, "the crash check did not finish") {
+		t.Errorf("note = %q", res.Runs[0].Note)
+	}
+}
+
+// A report counts only from the log file of the program's own pid. Another
+// process (or the program itself, before a real crash) could plant one.
+func TestRunReportMustBeFromProgram(t *testing.T) {
+	f := newFake(t)
+	f.reportName = "asan.7"
+	res := f.run(t)
+	if res.State != result.NotReproduced || res.Crashed != 0 {
+		t.Errorf("got %s, crashed %d", res.State, res.Crashed)
+	}
+	if !strings.Contains(res.Runs[0].Note, "not in the log file of the program (pid 1)") {
+		t.Errorf("note = %q", res.Runs[0].Note)
+	}
+}
+
+// A failing watcher is an infrastructure error, not a verdict on the report.
+func TestRunWatchFailureIsAnError(t *testing.T) {
+	f := newFake(t)
+	f.verdicts = []string{`{"error":"ptrace: operation not permitted"}`}
+	_, err := run(context.Background(), Options{ProjectPath: "/p/project.yaml", ReproPath: f.reproPath, CacheDir: f.cacheDir}, f.deps())
+	if err == nil || !strings.Contains(err.Error(), "crash check: ptrace: operation not permitted") {
+		t.Errorf("err = %v", err)
+	}
+
+	f = newFake(t)
+	f.watchErr = errors.New("go build failed")
+	_, err = run(context.Background(), Options{ProjectPath: "/p/project.yaml", ReproPath: f.reproPath, CacheDir: f.cacheDir}, f.deps())
+	if err == nil || !strings.Contains(err.Error(), "go build failed") || f.called("sandboxRun") != 0 {
+		t.Errorf("err = %v, %d runs", err, f.called("sandboxRun"))
+	}
+}
+
+// With a planted report next to the real one, the program's own file wins,
+// whatever the names sort like.
+func TestCollectReportPrefersProgramLog(t *testing.T) {
+	parse := func(s string) *result.Crash {
+		if kind, ok := strings.CutPrefix(s, "CRASH "); ok {
+			return crashOf(kind, "sig")
+		}
+		return nil
+	}
+	dir, err := makeOutDir(t.TempDir(), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"asan.0":       "CRASH use-after-free",
+		"asan.42":      "CRASH heap-buffer-overflow",
+		"ubsan.9":      "CRASH stack-buffer-overflow",
+		watch.FileName: `{"pid":42,"status":77,"sanitizer_exit":true}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "tok", name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	crash, report, note, err := collectReport(dir, "tok", 77, 77, parse)
+	if err != nil || crash == nil || crash.Kind != "heap-buffer-overflow" || report != "CRASH heap-buffer-overflow" || note != "" {
+		t.Errorf("crash %+v, report %q, note %q, err %v", crash, report, note, err)
+	}
+}
+
+func TestLogOf(t *testing.T) {
+	for name, want := range map[string]bool{
+		"asan.42": true, "ubsan.42": true, "asan.tinyparse.42": true,
+		"asan.142": false, "asan.4": false, "watch.json": false, "x.42": false, "asan.42.x": false,
+	} {
+		if got := logOf(name, 42); got != want {
+			t.Errorf("logOf(%q, 42) = %v", name, got)
+		}
+	}
+	if logOf("asan.0", 0) {
+		t.Error("pid 0 matched")
 	}
 }
