@@ -113,7 +113,7 @@ h2{font:400 clamp(40px,5.4vw,76px)/.95 var(--serif);letter-spacing:-.015em}
 .fp i{aspect-ratio:1;background:rgba(239,231,214,.1)}
 .fp i.x{background:var(--c,var(--ivory))}
 
-.locks{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:min(430px,100%);margin-top:6px}
+.locks{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:min(540px,100%);margin-top:6px}
 .lock{padding:14px 8px 12px;border:1px solid var(--line2);border-radius:2px;background:rgba(10,17,20,.82);text-align:center;font:500 10px/1.4 var(--mono);color:var(--muted);transition:all .2s}
 .lock svg{display:block;width:34px;height:34px;margin:0 auto 9px;fill:none;stroke:var(--brass);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:stroke .2s}
 .lock.hit{border-color:var(--red);color:var(--ivory);background:rgba(224,86,63,.14);animation:jolt .4s}
@@ -223,6 +223,7 @@ h2{font:400 clamp(40px,5.4vw,76px)/.95 var(--serif);letter-spacing:-.015em}
       <div class="lock"><svg viewBox="0 0 34 34"><path d="M8 30V6h18v24M5 30h24"/><circle cx="21" cy="18" r="1.5"/></svg>project programs<br>only</div>
       <div class="lock"><svg viewBox="0 0 34 34"><path d="M4 9h9l3 4h14v15H4z"/><path d="M17 18v4M15 22h4"/></svg>secret<br>log folder</div>
       <div class="lock"><svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="12"/><path d="M17 5v3M17 26v3M5 17h3M26 17h3M17 17l5-6"/></svg>secret<br>exit code</div>
+      <div class="lock"><svg viewBox="0 0 34 34"><path d="M3 17s5-9 14-9 14 9 14 9-5 9-14 9S3 17 3 17z"/><circle cx="17" cy="17" r="4"/></svg>watched<br>exit</div>
     </div>
     <div class="why" id="why" aria-live="polite"></div>
   </div>
@@ -708,6 +709,8 @@ h2{font:400 clamp(40px,5.4vw,76px)/.95 var(--serif);letter-spacing:-.015em}
     { t: "Run my own shell script", lock: 0, state: "INVALID_INPUT", why: "A shell is not something the project builds, so nothing runs at all.", test: "TestE2EReporterShellIsRejected", f: E2E },
     { t: "Write the log file myself", lock: 1, state: "NOT_REPRODUCED", why: "The folder has a new random name every run, and its parent cannot be listed.", test: "TestMakeOutDirModes", f: RT },
     { t: "Exit with a failing code", lock: 2, state: "NOT_REPRODUCED", why: "Each run has its own secret code from 64 to 120. Exit 1 does not match.", test: "TestRunIgnoresReportWithWrongExitCode", f: RT },
+    { t: "Forge it from a script", lock: 3, state: "NOT_REPRODUCED", why: "A watcher outside the program sees the exit come from exit() in libc, not from the sanitizer. Before the watcher, this trick worked.", test: "TestE2EScriptForgedReportIsCaught", f: E2E },
+    { t: "Plant a second report", lock: 3, state: "NOT_REPRODUCED", why: "Only the log file named after the program's own process ID counts.", test: "TestRunReportMustBeFromProgram", f: RT },
     { t: "Plant a symlink", lock: 1, state: "NOT_REPRODUCED", why: "Log files are opened with O_NOFOLLOW. Symlinks and FIFOs are skipped.", test: "TestCollectReportSkipsSymlinksAndFifos", f: RT },
     { t: "Cite made-up functions", lock: 1, state: "NOT_REPRODUCED", why: "No crash in 3 runs, and the invented names are listed next to the verdict.", test: "TestE2EInventedFunctionIsAFinding", f: E2E }
   ];
