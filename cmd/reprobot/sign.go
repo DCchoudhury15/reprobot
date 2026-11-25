@@ -20,7 +20,7 @@ to "reprobot run --sign-key" and publish the public key, so others can run
 
 const verifyUsage = `usage: reprobot verify --key signing.pub ENVELOPE
 
-Checks a signed result or a signed fix check (a file, or - for stdin).
+Checks a signed result, fix check or bisect (a file, or - for stdin).
 When the signature is good it prints the signed JSON to stdout and a
 summary to stderr, and exits 0. Otherwise it exits 1.`
 
@@ -81,12 +81,21 @@ func verifyCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	payload, err := sign.VerifyAs(env, pub, sign.PayloadType, sign.FixPayloadType)
+	payload, err := sign.VerifyAs(env, pub, sign.PayloadType, sign.FixPayloadType, sign.BisectPayloadType)
 	if err != nil {
 		return fail(err)
 	}
 	var summary string
-	if env.PayloadType == sign.FixPayloadType {
+	switch env.PayloadType {
+	case sign.BisectPayloadType:
+		var b result.Bisect
+		if err := json.Unmarshal(payload, &b); err != nil || b.Report == nil {
+			return fail(fmt.Errorf("signed payload is not a bisect: %v", err))
+		}
+		in := b.Report.Inputs
+		summary = fmt.Sprintf("bisect %s: %s for %s, report commit %s, good commit %s (profile %s, reproducer %s)",
+			b.Bisect, b.Reason, in.Project, in.Commit, b.GoodCommit, in.Profile, in.ReproducerHash)
+	case sign.FixPayloadType:
 		var fc result.FixCheck
 		if err := json.Unmarshal(payload, &fc); err != nil || fc.Report == nil {
 			return fail(fmt.Errorf("signed payload is not a fix check: %v", err))
@@ -94,7 +103,7 @@ func verifyCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		in := fc.Report.Inputs
 		summary = fmt.Sprintf("fix check %s: %s for %s, report commit %s, fix commit %s (profile %s, reproducer %s)",
 			fc.Fix, fc.Reason, in.Project, in.Commit, fc.FixCommit, in.Profile, in.ReproducerHash)
-	} else {
+	default:
 		var res result.Result
 		if err := json.Unmarshal(payload, &res); err != nil {
 			return fail(fmt.Errorf("signed payload is not a result: %w", err))

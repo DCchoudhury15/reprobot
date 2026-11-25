@@ -360,3 +360,91 @@ func TestFixCheck(t *testing.T) {
 		t.Errorf("fix/signed without a fix check: %d %s", code, out)
 	}
 }
+
+// TestBisect covers a report sent with a good commit: it is stored and
+// shown as pending, then the finished bisect is in the JSON, on the page,
+// and signed at /bisect/signed, with the same access rules as the report.
+func TestBisect(t *testing.T) {
+	tokens, secret := tokensFile(t, "alice", "bob")
+	e := newEnvWith(t, func(s *server.Server) { s.Tokens = tokens })
+	ctx := context.Background()
+
+	body, ctype := form(t, goodRepro, nil, map[string]string{"good_commit": " v1.0 "})
+	req, _ := http.NewRequest(http.MethodPost, e.ts.URL+"/v1/reports", body)
+	req.Header.Set("Content-Type", ctype)
+	req.Header.Set("Authorization", "Bearer "+secret["alice"])
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("create: %d %s", resp.StatusCode, out)
+	}
+	id := decode[struct {
+		ReportID string `json:"report_id"`
+	}](t, out).ReportID
+
+	type view struct {
+		Fix    *struct{}
+		Bisect *struct {
+			GoodCommit string `json:"good_commit"`
+			State      string
+			Reason     string
+			FirstBad   string `json:"first_bad"`
+			Steps      []result.BisectStep
+			Signed     bool
+		}
+	}
+	_, out = e.getAs(t, secret["alice"], "/v1/reports/"+id)
+	if v := decode[view](t, out); v.Bisect == nil || v.Bisect.GoodCommit != "v1.0" || v.Bisect.State != "" || v.Bisect.Signed || v.Fix != nil {
+		t.Fatalf("pending bisect: %s", out)
+	}
+	if _, page := e.getAs(t, secret["alice"], "/reports/"+id); !strings.Contains(string(page), "Bisect: not run yet") {
+		t.Errorf("page does not show the pending bisect:\n%s", page)
+	}
+
+	job, err := e.st.Claim(ctx, "w", time.Minute)
+	if err != nil || job == nil || job.GoodCommit != "v1.0" {
+		t.Fatalf("Claim = %+v, %v", job, err)
+	}
+	first := strings.Repeat("c", 40)
+	res := &result.Result{State: result.ReproducedAsClaimed, Inputs: result.Inputs{Commit: "aaaa"}}
+	bisectEnv := []byte(`{"payloadType":"bisect",  "payload":"e30=","signatures":[]}`)
+	if err := e.st.CompleteJob(ctx, job.ID, "w", store.Outcome{
+		Result: res,
+		Bisect: &result.Bisect{GoodCommit: "v1.0", Bisect: result.Found, Reason: "<i>found</i>", FirstBad: first, LastGood: strings.Repeat("b", 40), Commits: 5, Report: res,
+			Steps: []result.BisectStep{{Commit: first, Verdict: result.StepBad, State: result.ReproducedAsClaimed, Reason: "the same crash"}}},
+		BisectEnvelope: bisectEnv,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, out = e.getAs(t, secret["alice"], "/v1/reports/"+id)
+	v := decode[view](t, out)
+	if v.Bisect == nil || v.Bisect.State != "FOUND" || v.Bisect.FirstBad != first || len(v.Bisect.Steps) != 1 || !v.Bisect.Signed {
+		t.Errorf("finished bisect: %s", out)
+	}
+	_, page := e.getAs(t, secret["alice"], "/reports/"+id)
+	for _, want := range []string{"Bisect: FOUND", "&lt;i&gt;found&lt;/i&gt;", first, "cccccccccccc</code></td><td>bad", "/v1/reports/" + id + "/bisect/signed"} {
+		if !strings.Contains(string(page), want) {
+			t.Errorf("page does not contain %q", want)
+		}
+	}
+	if code, out := e.getAs(t, secret["alice"], "/v1/reports/"+id+"/bisect/signed"); code != http.StatusOK || string(out) != string(bisectEnv) {
+		t.Errorf("bisect/signed: %d %s", code, out)
+	}
+	if code, out := e.getAs(t, secret["bob"], "/v1/reports/"+id+"/bisect/signed"); code != http.StatusNotFound || strings.Contains(string(out), "payload") {
+		t.Errorf("bob reads alice's bisect: %d %s", code, out)
+	}
+
+	plain, _, _, _ := e.st.CreateReport(ctx, store.ReportInput{Project: "tinyparse", Owner: "alice", Dir: "/d"})
+	_, out = e.getAs(t, secret["alice"], "/v1/reports/"+plain.String())
+	if strings.Contains(string(out), `"bisect"`) {
+		t.Errorf("report without a good commit shows a bisect: %s", out)
+	}
+	if code, out := e.getAs(t, secret["alice"], "/v1/reports/"+plain.String()+"/bisect/signed"); code != http.StatusNotFound || !strings.Contains(string(out), "no signed bisect") {
+		t.Errorf("bisect/signed without a bisect: %d %s", code, out)
+	}
+}

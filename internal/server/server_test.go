@@ -358,6 +358,8 @@ func TestCreateReportBadInput(t *testing.T) {
 		"fix commit range":  {repro: goodRepro, fields: map[string]string{"fix_commit": "v1..v2"}},
 		"fix commit flag":   {repro: goodRepro, fields: map[string]string{"fix_commit": "--upload-pack=x"}},
 		"fix commit empty":  {repro: goodRepro, fields: map[string]string{"fix_commit": ""}},
+		"good commit range": {repro: goodRepro, fields: map[string]string{"good_commit": "v1..v2"}},
+		"good commit flag":  {repro: goodRepro, fields: map[string]string{"good_commit": "--upload-pack=x"}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

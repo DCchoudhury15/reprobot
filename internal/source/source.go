@@ -367,3 +367,53 @@ func lockFile(ctx context.Context, path string) (unlock func(), err error) {
 		}
 	}
 }
+
+// ErrBadRange means good and bad do not form a range that can be bisected.
+// Callers treat it as bad input.
+var ErrBadRange = errors.New("bad bisect range")
+
+// MaxPathCommits caps the commits FirstParentPath returns.
+const MaxPathCommits = 1 << 16
+
+// FirstParentPath returns the commits after good up to and including bad,
+// oldest first, on the first-parent history of bad (the main line of a
+// project that merges branches). good must be on that history, so each
+// commit in the list is the child of the one before it, and the first is
+// the child of good. Both must be full commit ids.
+func FirstParentPath(ctx context.Context, mirrorDir, good, bad string) ([]string, error) {
+	if !isFullSHA(good) || !isFullSHA(bad) {
+		return nil, fmt.Errorf("source: path needs full commit ids, got %q and %q", good, bad)
+	}
+	if good == bad {
+		return nil, fmt.Errorf("%w: the good commit is the report commit", ErrBadRange)
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", mirrorDir, "merge-base", "--is-ancestor", good, bad)
+	cmd.Env = gitEnv()
+	cmd.WaitDelay = 5 * time.Second
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 && ctx.Err() == nil {
+			return nil, fmt.Errorf("%w: %s is not an ancestor of %s", ErrBadRange, good[:12], bad[:12])
+		}
+		return nil, fmt.Errorf("source: merge-base: %w", err)
+	}
+	out, err := git(ctx, "-C", mirrorDir, "rev-list", "--first-parent", "--reverse", bad, "^"+good)
+	if err != nil {
+		return nil, fmt.Errorf("source: rev-list: %w", err)
+	}
+	commits := strings.Fields(string(out))
+	if len(commits) == 0 || commits[len(commits)-1] != bad {
+		return nil, fmt.Errorf("source: rev-list did not end at %s", bad[:12])
+	}
+	if len(commits) > MaxPathCommits {
+		return nil, fmt.Errorf("%w: %d commits between the good commit and the report commit, at most %d", ErrBadRange, len(commits), MaxPathCommits)
+	}
+	// good is an ancestor of bad, but it may sit on a merged branch rather
+	// than on the main line. Then the list would not start at a child of
+	// good, and "first bad commit" would not mean anything.
+	parent, err := git(ctx, "-C", mirrorDir, "rev-parse", "--verify", "--quiet", "--end-of-options", commits[0]+"^1")
+	if err != nil || strings.TrimSpace(string(parent)) != good {
+		return nil, fmt.Errorf("%w: %s is not on the first-parent history of %s; pick a good commit on the main line", ErrBadRange, good[:12], bad[:12])
+	}
+	return commits, nil
+}

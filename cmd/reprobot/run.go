@@ -28,19 +28,23 @@ const (
 	exitInfra     = 3 // infrastructure error (Docker, disk, network)
 )
 
-const runUsage = `usage: reprobot run --project project.yaml [--cache DIR] [--fix COMMIT] [--json | --sign-key KEY] repro.yaml
+const runUsage = `usage: reprobot run --project project.yaml [--cache DIR] [--fix COMMIT | --bisect GOOD] [--json | --sign-key KEY] repro.yaml
 
   --project FILE  maintainer project config (required)
   --cache DIR     git mirrors and build cache
                   (default $XDG_CACHE_HOME/reprobot, else ~/.cache/reprobot)
   --json          print the result as JSON
   --sign-key KEY  print the result as a signed envelope (see reprobot keygen);
-                  with --fix, the whole fix check is signed
+                  with --fix or --bisect, the whole check is signed
   --fix COMMIT    also run the report on COMMIT, the commit that claims to
                   fix it, and say whether the fix works
+  --bisect GOOD   find the first commit with the crash, between GOOD (an
+                  older commit without it, on the main line) and the
+                  report commit
 
 Flags go before repro.yaml.
-Exit codes: 0 reproduced as claimed (with --fix: FIXED), 1 any other
+Exit codes: 0 reproduced as claimed (with --fix: FIXED, with --bisect:
+FOUND), 1 any other
 verdict, 2 usage error, 3 infrastructure error.`
 
 type runArgs struct {
@@ -49,16 +53,17 @@ type runArgs struct {
 	json    bool
 	signKey string
 	fix     string
+	bisect  string
 	repro   string
 }
 
 func runCmd(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runMain(ctx, args, os.Stdout, os.Stderr, runner.Run)
+	return runMain(ctx, args, os.Stdout, os.Stderr, runner.Run, runner.CommitPath)
 }
 
-func runMain(ctx context.Context, args []string, stdout, stderr io.Writer, run func(context.Context, runner.Options) (*result.Result, error)) int {
+func runMain(ctx context.Context, args []string, stdout, stderr io.Writer, run func(context.Context, runner.Options) (*result.Result, error), path runner.PathFunc) int {
 	a, err := parseRunArgs(args)
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Fprintln(stdout, runUsage)
@@ -90,6 +95,9 @@ func runMain(ctx context.Context, args []string, stdout, stderr io.Writer, run f
 	}
 	if a.fix != "" {
 		return fixMain(ctx, a, key, opts, res, stdout, stderr, run)
+	}
+	if a.bisect != "" {
+		return bisectMain(ctx, a, key, opts, res, stdout, stderr, run, path)
 	}
 	switch {
 	case key != nil:
@@ -123,12 +131,15 @@ func parseRunArgs(args []string) (runArgs, error) {
 	fs.BoolVar(&a.json, "json", false, "")
 	fs.StringVar(&a.signKey, "sign-key", "", "")
 	fs.StringVar(&a.fix, "fix", "", "")
+	fs.StringVar(&a.bisect, "bisect", "", "")
 	if err := fs.Parse(args); err != nil {
 		return a, err
 	}
 	switch {
 	case a.project == "":
 		return a, errors.New("--project is required")
+	case a.fix != "" && a.bisect != "":
+		return a, errors.New("--fix and --bisect do not go together; run them one at a time")
 	case a.json && a.signKey != "":
 		return a, errors.New("--json and --sign-key do not go together; the envelope holds the JSON")
 	case fs.NArg() == 0:
@@ -180,6 +191,63 @@ func fixMain(ctx context.Context, a runArgs, key ed25519.PrivateKey, opts runner
 		return exitAsClaimed
 	}
 	return exitVerdict
+}
+
+// bisectMain finds the first commit with the crash and prints the bisect.
+// With a key it prints the bisect as a signed envelope.
+func bisectMain(ctx context.Context, a runArgs, key ed25519.PrivateKey, opts runner.Options, before *result.Result, stdout, stderr io.Writer, run func(context.Context, runner.Options) (*result.Result, error), path runner.PathFunc) int {
+	b, err := runner.Bisect(ctx, run, path, opts, before, a.bisect)
+	if err != nil {
+		fmt.Fprintf(stderr, "reprobot run: %v\n", err)
+		return exitInfra
+	}
+	switch {
+	case key != nil:
+		payload, err := json.Marshal(b)
+		if err == nil {
+			err = writeIndented(stdout, sign.SignAs(key, sign.BisectPayloadType, payload))
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "reprobot run: %v\n", err)
+			return exitInfra
+		}
+	case a.json:
+		if err := writeIndented(stdout, b); err != nil {
+			fmt.Fprintf(stderr, "reprobot run: %v\n", err)
+			return exitInfra
+		}
+	default:
+		fmt.Fprintln(stdout, "== on the report commit ==")
+		printResult(stdout, b.Report)
+		printBisect(stdout, b)
+	}
+	if b.Bisect == result.Found {
+		return exitAsClaimed
+	}
+	return exitVerdict
+}
+
+func printBisect(w io.Writer, b *result.Bisect) {
+	if len(b.Steps) > 0 {
+		fmt.Fprintln(w, "\n== bisect ==")
+		for _, s := range b.Steps {
+			fmt.Fprintf(w, "  %s  %-4s  %-22s %s\n", shortSHA(s.Commit), s.Verdict, s.State, s.Reason)
+		}
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "%-10s %s\n", "bisect:", b.Bisect)
+	fmt.Fprintf(w, "%-10s %s\n", "reason:", b.Reason)
+	if b.FirstBad != "" {
+		fmt.Fprintf(w, "%-10s %s\n", "first bad:", b.FirstBad)
+		fmt.Fprintf(w, "%-10s %s\n", "last good:", b.LastGood)
+	}
+}
+
+func shortSHA(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }
 
 // defaultCacheDir is $XDG_CACHE_HOME/reprobot, else ~/.cache/reprobot.

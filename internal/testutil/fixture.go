@@ -38,7 +38,81 @@ func NewTinyparseRepo(t testing.TB) Tinyparse {
 	t.Helper()
 	src := FixtureDir()
 	dir := t.TempDir()
-	git := func(args ...string) string {
+	git := gitRunner(t, dir)
+	copyFile(t, filepath.Join(src, "Makefile"), filepath.Join(dir, "Makefile"))
+	copyFile(t, filepath.Join(src, "vuln", "tinyparse.c"), filepath.Join(dir, "tinyparse.c"))
+	git("init", "-q", "-b", "main")
+	git("add", "-A")
+	git("commit", "-q", "-m", "vulnerable parser")
+	vuln := git("rev-parse", "HEAD")
+	copyFile(t, filepath.Join(src, "fixed", "tinyparse.c"), filepath.Join(dir, "tinyparse.c"))
+	git("commit", "-q", "-am", "check name length")
+	fix := git("rev-parse", "HEAD")
+	git("revert", "--no-edit", "HEAD")
+	revert := git("rev-parse", "HEAD")
+	return Tinyparse{RepoDir: dir, Vuln: vuln, Fix: fix, Revert: revert}
+}
+
+// History is a fixture repo for bisect tests. Commits[0] has no bug and
+// the last commit has it. Commits[Broken] does not build. The bug comes in with
+// Commits[BugAt].
+type History struct {
+	RepoDir string
+	Commits []string
+	BugAt   int
+	Broken  int
+}
+
+// NewTinyparseHistory creates a main line of six commits:
+//
+//	0 fixed parser       (good)
+//	1 notes
+//	2 broken Makefile    (does not build)
+//	3 Makefile restored
+//	4 vulnerable parser  (the first bad commit)
+//	5 notes
+func NewTinyparseHistory(t testing.TB) History {
+	t.Helper()
+	src := FixtureDir()
+	dir := t.TempDir()
+	git := gitRunner(t, dir)
+	var commits []string
+	commit := func(msg string) {
+		git("add", "-A")
+		git("commit", "-q", "-m", msg)
+		commits = append(commits, git("rev-parse", "HEAD"))
+	}
+	notes := func(line string) {
+		f, err := os.OpenFile(filepath.Join(dir, "NOTES"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err == nil {
+			_, err = f.WriteString(line + "\n")
+			f.Close()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	copyFile(t, filepath.Join(src, "Makefile"), filepath.Join(dir, "Makefile"))
+	copyFile(t, filepath.Join(src, "fixed", "tinyparse.c"), filepath.Join(dir, "tinyparse.c"))
+	commit("fixed parser")
+	notes("one")
+	commit("notes")
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("this is not a Makefile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit("break the build")
+	copyFile(t, filepath.Join(src, "Makefile"), filepath.Join(dir, "Makefile"))
+	commit("restore the Makefile")
+	copyFile(t, filepath.Join(src, "vuln", "tinyparse.c"), filepath.Join(dir, "tinyparse.c"))
+	commit("drop the name length check")
+	notes("two")
+	commit("more notes")
+	return History{RepoDir: dir, Commits: commits, BugAt: 4, Broken: 2}
+}
+
+func gitRunner(t testing.TB, dir string) func(args ...string) string {
+	return func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
@@ -53,18 +127,6 @@ func NewTinyparseRepo(t testing.TB) Tinyparse {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	copyFile(t, filepath.Join(src, "Makefile"), filepath.Join(dir, "Makefile"))
-	copyFile(t, filepath.Join(src, "vuln", "tinyparse.c"), filepath.Join(dir, "tinyparse.c"))
-	git("init", "-q", "-b", "main")
-	git("add", "-A")
-	git("commit", "-q", "-m", "vulnerable parser")
-	vuln := git("rev-parse", "HEAD")
-	copyFile(t, filepath.Join(src, "fixed", "tinyparse.c"), filepath.Join(dir, "tinyparse.c"))
-	git("commit", "-q", "-am", "check name length")
-	fix := git("rev-parse", "HEAD")
-	git("revert", "--no-edit", "HEAD")
-	revert := git("rev-parse", "HEAD")
-	return Tinyparse{RepoDir: dir, Vuln: vuln, Fix: fix, Revert: revert}
 }
 
 // WriteInputs writes project.yaml and a repro dir (repro.yaml + input.bin)

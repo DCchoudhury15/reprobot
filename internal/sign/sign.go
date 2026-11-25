@@ -31,6 +31,8 @@ const (
 	PayloadType = "application/vnd.reprobot.result+json"
 	// FixPayloadType is the DSSE payload type of a signed fix check.
 	FixPayloadType = "application/vnd.reprobot.fix+json"
+	// BisectPayloadType is the DSSE payload type of a signed bisect.
+	BisectPayloadType = "application/vnd.reprobot.bisect+json"
 )
 
 // Envelope is a DSSE envelope.

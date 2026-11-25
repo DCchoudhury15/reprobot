@@ -31,7 +31,7 @@ func TestKeygenSignedRunVerify(t *testing.T) {
 	ran := false
 	fake := func(context.Context, runner.Options) (*result.Result, error) { ran = true; return want, nil }
 	out.Reset()
-	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--sign-key", key, "r"}, &out, &errOut, fake); code != 0 {
+	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--sign-key", key, "r"}, &out, &errOut, fake, nil); code != 0 {
 		t.Fatalf("signed run exit %d: %s", code, errOut.String())
 	}
 	envPath := filepath.Join(dir, "result.json")
@@ -83,7 +83,7 @@ func TestKeygenSignedRunVerify(t *testing.T) {
 		{"--project", "p", "--cache", "/c", "--sign-key", filepath.Join(dir, "missing"), "r"},
 		{"--project", "p", "--cache", "/c", "--json", "--sign-key", key, "r"},
 	} {
-		if code := runMain(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, fake); code != exitUsage || ran {
+		if code := runMain(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, fake, nil); code != exitUsage || ran {
 			t.Errorf("%v: exit %d ran %v, want %d and no run", args, code, ran, exitUsage)
 		}
 	}
@@ -103,7 +103,7 @@ func TestSignedFixCheckVerify(t *testing.T) {
 		return &result.Result{State: result.NotReproduced, Inputs: result.Inputs{Project: "p", Commit: "bbbbbbbbbb"}}, nil
 	}
 	var out, errOut bytes.Buffer
-	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--fix", "bbbbbbb", "--sign-key", key, "r"}, &out, &errOut, fake); code != exitAsClaimed {
+	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--fix", "bbbbbbb", "--sign-key", key, "r"}, &out, &errOut, fake, nil); code != exitAsClaimed {
 		t.Fatalf("signed fix check exit %d: %s", code, errOut.String())
 	}
 	env, err := sign.Decode(out.Bytes())

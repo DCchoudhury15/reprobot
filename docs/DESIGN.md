@@ -236,12 +236,47 @@ part of what is signed, so a signed fix check can never pass as a signed
 result or the other way round. It holds both runs, so it can be checked on
 its own.
 
+## Bisect
+
+`reprobot run --bisect GOOD` finds the first commit with the crash. It
+runs the report on its own commit first; only a report that reproduced
+there (every run crashed) is bisected. Then it walks the first-parent
+history from the report commit back to GOOD. That is the main line of a
+project that merges branches, so each commit in the list is the child of
+the one before it. GOOD must be on it: a commit on a merged branch, a
+later commit or an unrelated one gives `CANNOT_TELL` and runs nothing. A
+merge that brings the bug in is named as the merge commit.
+
+GOOD is run next, since the answer is only right if GOOD has no crash. If
+it has the same crash, or gives no answer, the bisect stops with
+`CANNOT_TELL`. Then it halves the range. Each commit is run like any
+report, with the same files, command and number of runs, and gets a
+verdict:
+
+- **good**: `NOT_REPRODUCED`.
+- **bad**: it crashed with the same bug as on the report commit: the same
+  signature in any run, or the same crash line. A bisect looks for this
+  bug, not for any crash; counting another crash as bad would name the
+  commit that added the other bug. The crash line covers a rename of a
+  function further up the stack.
+- **skip**: anything else (`BUILD_FAILED`, `TIMEOUT`, `OOM`, another
+  crash). The next commit tried is the untested one nearest the middle.
+
+`FOUND` names the first bad commit and its parent, which is good. `RANGE`
+means skips are left between the last good and the first bad commit, so it
+is one of those. A bisect stops after 24 runs past GOOD (a long stretch of
+commits that do not build) with `RANGE` too.
+
+In the service a report can carry a `good_commit`. The bisect runs in the
+same job as the report, and a signed bisect has its own payload type
+(`application/vnd.reprobot.bisect+json`).
+
 ## Later
 
-OSS-Fuzz project import, bisect, Firecracker.
+OSS-Fuzz project import, Firecracker.
 Built since this list was first written: the Postgres job queue with
 leases, the intake API with tokens and rate limits, the result page, signed
 results, the fix check in the CLI (`run --fix`) and the service
-(`fix_commit`), the crash check from outside the process
+(`fix_commit`), bisect (`run --bisect`, `good_commit`), the crash check from outside the process
 (`reprobot-watch`), and the GitHub App intake for private vulnerability
 reports (see SERVICE.md).

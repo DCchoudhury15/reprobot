@@ -63,6 +63,21 @@ pre { background: #f4f4f4; padding: .5rem; overflow-x: auto; white-space: pre-wr
 </table>
 {{if .Signed}}<p><a href="/v1/reports/{{$.ReportID}}/fix/signed">Signed fix check</a>, check it the same way as the signed result.</p>{{end}}
 {{end}}
+{{with .Bisect}}
+<h2>Bisect: {{if .State}}{{.State}}{{else}}not run yet{{end}}</h2>
+{{if .Reason}}<p>{{.Reason}}</p>{{end}}
+<table>
+<tr><th>Good commit</th><td><code>{{.GoodCommit}}</code></td></tr>
+{{if .FirstBad}}<tr><th>First bad commit</th><td><code>{{.FirstBad}}</code>{{if .Untested}} (or one of the {{.Untested}} commits before it){{end}}</td></tr>
+<tr><th>Last good commit</th><td><code>{{.LastGood}}</code></td></tr>{{end}}
+{{if .Commits}}<tr><th>Commits in range</th><td>{{.Commits}}</td></tr>{{end}}
+</table>
+{{if .Steps}}<table>
+<tr><th>Commit</th><th>Verdict</th><th>State</th><th>Why</th></tr>
+{{range .Steps}}<tr><td><code>{{printf "%.12s" .Commit}}</code></td><td>{{.Verdict}}</td><td>{{.State}}</td><td>{{.Reason}}</td></tr>
+{{end}}</table>{{end}}
+{{if .Signed}}<p><a href="/v1/reports/{{$.ReportID}}/bisect/signed">Signed bisect</a>, check it the same way as the signed result.</p>{{end}}
+{{end}}
 {{with .Crash}}
 <h2>Crash</h2>
 <table>

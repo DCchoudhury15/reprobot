@@ -12,3 +12,17 @@ func TestNewTinyparseRepo(t *testing.T) {
 		t.Fatal("empty paths")
 	}
 }
+
+func TestNewTinyparseHistory(t *testing.T) {
+	h := NewTinyparseHistory(t)
+	if len(h.Commits) != 6 || h.BugAt != 4 || h.Broken != 2 {
+		t.Fatalf("history %+v", h)
+	}
+	seen := map[string]bool{}
+	for _, c := range h.Commits {
+		if len(c) != 40 || seen[c] {
+			t.Fatalf("bad or repeated commit %q", c)
+		}
+		seen[c] = true
+	}
+}

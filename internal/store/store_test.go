@@ -118,8 +118,8 @@ func TestMigrateConcurrentAndRepeated(t *testing.T) {
 	if err := stores[0].Migrate(ctx); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
-	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 7 {
-		t.Errorf("schema_migrations rows = %d, want 7", n)
+	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 8 {
+		t.Errorf("schema_migrations rows = %d, want 8", n)
 	}
 }
 
@@ -637,6 +637,53 @@ func TestFixCheckStored(t *testing.T) {
 	finish(t, st, id2, res)
 	if rep, _ := st.GetReport(ctx, id2); rep.FixCommit != "" || rep.Fix != nil || rep.FixEnvelope != nil {
 		t.Errorf("report without fix: %q %+v %q", rep.FixCommit, rep.Fix, rep.FixEnvelope)
+	}
+}
+
+func TestBisectStored(t *testing.T) {
+	st := storetest.New(t)
+	ctx := context.Background()
+	id, _, _, err := st.CreateReport(ctx, store.ReportInput{Project: "p", Dir: "/d", GoodCommit: "v1.0", FixCommit: "v1.2.3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep, _ := st.GetReport(ctx, id); rep.GoodCommit != "v1.0" || rep.Bisect != nil {
+		t.Fatalf("before the run: good commit %q, bisect %+v", rep.GoodCommit, rep.Bisect)
+	}
+	job := claimEventually(t, st, "w", time.Minute)
+	if job.GoodCommit != "v1.0" || job.FixCommit != "v1.2.3" {
+		t.Fatalf("claimed job good %q fix %q", job.GoodCommit, job.FixCommit)
+	}
+	res := &result.Result{State: result.ReproducedAsClaimed, Inputs: result.Inputs{Commit: "aaaa"}}
+	b := &result.Bisect{
+		GoodCommit: "v1.0", Bisect: result.Found, Reason: "found", FirstBad: "cccc", LastGood: "bbbb", Commits: 9, Report: res,
+		Steps: []result.BisectStep{{Commit: "bbbb", Verdict: result.StepGood, State: result.NotReproduced, Reason: "no\x00crash"}},
+	}
+	out := store.Outcome{Result: res, Bisect: b, BisectEnvelope: []byte(`{ "b" : 1 }`)}
+	if err := st.CompleteJob(ctx, job.ID, "w", out); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := st.GetReport(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Bisect == nil || rep.Bisect.Bisect != result.Found || rep.Bisect.FirstBad != "cccc" || len(rep.Bisect.Steps) != 1 {
+		t.Fatalf("bisect %+v", rep.Bisect)
+	}
+	if got := rep.Bisect.Steps[0].Reason; got != "no\uFFFDcrash" {
+		t.Errorf("step reason = %q, want NUL replaced", got)
+	}
+	if string(rep.BisectEnvelope) != `{ "b" : 1 }` || rep.Fix != nil || rep.FixEnvelope != nil {
+		t.Errorf("envelopes: bisect %q, fix %+v %q", rep.BisectEnvelope, rep.Fix, rep.FixEnvelope)
+	}
+	if got := count(t, st, "SELECT count(*) FROM results WHERE bisect_state = 'FOUND'"); got != 1 {
+		t.Errorf("bisect_state rows = %d, want 1", got)
+	}
+
+	id2, _ := newReport(t, st, "p")
+	finish(t, st, id2, res)
+	if rep, _ := st.GetReport(ctx, id2); rep.GoodCommit != "" || rep.Bisect != nil || rep.BisectEnvelope != nil {
+		t.Errorf("report without bisect: %q %+v %q", rep.GoodCommit, rep.Bisect, rep.BisectEnvelope)
 	}
 }
 

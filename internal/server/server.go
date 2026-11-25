@@ -79,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/reports/{id}", protect(s.reportJSON))
 	mux.Handle("GET /v1/reports/{id}/signed", protect(s.reportSigned))
 	mux.Handle("GET /v1/reports/{id}/fix/signed", protect(s.fixSigned))
+	mux.Handle("GET /v1/reports/{id}/bisect/signed", protect(s.bisectSigned))
 	mux.Handle("GET /reports/{id}", protect(s.reportPage))
 	mux.HandleFunc("GET /v1/signing-key", s.signingKey)
 	mux.HandleFunc("POST /v1/github/webhook", s.githubWebhook)
@@ -233,6 +234,7 @@ func (s *Server) finishReport(ctx context.Context, tmp string, up *upload, owner
 		ReproHash:      up.hash,
 		Dir:            dir,
 		FixCommit:      up.fixCommit,
+		GoodCommit:     up.goodCommit,
 		GitHub:         gh,
 	})
 	if err != nil || !created {
@@ -253,7 +255,9 @@ type upload struct {
 	repro     []byte
 	reporter  string
 	fixCommit string
-	hash      string
+	// goodCommit asks for a bisect from this commit.
+	goodCommit string
+	hash       string
 	// wantProject, when set, is the project the report must be for.
 	wantProject string
 }
@@ -263,7 +267,7 @@ type upload struct {
 func readUpload(mr *multipart.Reader, dir string) (*upload, error) {
 	up := &upload{}
 	seen := map[string]bool{}
-	haveRepro, haveReporter, haveFix := false, false, false
+	haveRepro, haveReporter := false, false
 	nfiles := 0
 	for {
 		part, err := mr.NextPart()
@@ -323,19 +327,13 @@ func readUpload(mr *multipart.Reader, dir string) (*upload, error) {
 			}
 			up.reporter = v
 		case "fix_commit":
-			if haveFix {
-				return nil, badRequest("more than one fix_commit field")
+			if err := readCommit(part, &up.fixCommit); err != nil {
+				return nil, err
 			}
-			haveFix = true
-			data, err := io.ReadAll(io.LimitReader(part, maxKeyBytes+1))
-			if err != nil {
-				return nil, wrapRead(err)
+		case "good_commit":
+			if err := readCommit(part, &up.goodCommit); err != nil {
+				return nil, err
 			}
-			v := strings.TrimSpace(string(data))
-			if !spec.ValidCommit(v) {
-				return nil, badRequest("fix_commit %q is not a commit hash or tag name", truncateText(v, 80))
-			}
-			up.fixCommit = v
 		default:
 			return nil, badRequest("unknown form field %q", part.FormName())
 		}
@@ -469,6 +467,25 @@ func reproducerHash(dir string) string {
 	return h
 }
 
+// readCommit reads a commit form field (fix_commit, good_commit) into
+// *dst, which must still be empty.
+func readCommit(part *multipart.Part, dst *string) error {
+	name := part.FormName()
+	if *dst != "" {
+		return badRequest("more than one %s field", name)
+	}
+	data, err := io.ReadAll(io.LimitReader(part, maxKeyBytes+1))
+	if err != nil {
+		return wrapRead(err)
+	}
+	v := strings.TrimSpace(string(data))
+	if !spec.ValidCommit(v) {
+		return badRequest("%s %q is not a commit hash or tag name", name, truncateText(v, 80))
+	}
+	*dst = v
+	return nil
+}
+
 // reportView is what both the JSON endpoint and the page show.
 type reportView struct {
 	ReportID    string         `json:"report_id"`
@@ -488,9 +505,28 @@ type reportView struct {
 	// Signed is true when a signed result is at /v1/reports/{id}/signed.
 	Signed bool `json:"signed"`
 	// Fix is the fix check; nil when the report asked for none.
-	Fix         *fixView `json:"fix,omitempty"`
-	envelope    []byte   // the signed result, byte for byte
-	fixEnvelope []byte   // the signed fix check, byte for byte
+	Fix *fixView `json:"fix,omitempty"`
+	// Bisect is the bisect; nil when the report asked for none.
+	Bisect         *bisectView `json:"bisect,omitempty"`
+	envelope       []byte      // the signed result, byte for byte
+	fixEnvelope    []byte      // the signed fix check, byte for byte
+	bisectEnvelope []byte      // the signed bisect, byte for byte
+}
+
+// bisectView is the bisect of a report. State is empty until the job is
+// done.
+type bisectView struct {
+	GoodCommit string              `json:"good_commit"`
+	State      result.BisectState  `json:"state,omitempty"`
+	Reason     string              `json:"reason,omitempty"`
+	FirstBad   string              `json:"first_bad,omitempty"`
+	LastGood   string              `json:"last_good,omitempty"`
+	Untested   int                 `json:"untested,omitempty"`
+	Commits    int                 `json:"commits,omitempty"`
+	Steps      []result.BisectStep `json:"steps,omitempty"`
+	// Signed is true when a signed bisect is at
+	// /v1/reports/{id}/bisect/signed.
+	Signed bool `json:"signed"`
 }
 
 // fixView is the fix check of a report. State is empty until the job is
@@ -548,11 +584,21 @@ func (s *Server) loadReport(ctx context.Context, rawID string) (*reportView, err
 		Signed:      rep.Envelope != nil,
 		envelope:    rep.Envelope,
 		fixEnvelope: rep.FixEnvelope,
+
+		bisectEnvelope: rep.BisectEnvelope,
 	}
 	if rep.FixCommit != "" {
 		v.Fix = &fixView{Commit: rep.FixCommit, Signed: rep.FixEnvelope != nil}
 		if f := rep.Fix; f != nil {
 			v.Fix.State, v.Fix.Reason, v.Fix.Run = f.Fix, f.Reason, f.FixRun
+		}
+	}
+	if rep.GoodCommit != "" {
+		v.Bisect = &bisectView{GoodCommit: rep.GoodCommit, Signed: rep.BisectEnvelope != nil}
+		if b := rep.Bisect; b != nil {
+			v.Bisect.State, v.Bisect.Reason = b.Bisect, b.Reason
+			v.Bisect.FirstBad, v.Bisect.LastGood, v.Bisect.Untested = b.FirstBad, b.LastGood, b.Untested
+			v.Bisect.Commits, v.Bisect.Steps = b.Commits, b.Steps
 		}
 	}
 	dups, related, err := s.Store.Duplicates(ctx, rep.Project, rep.Signature, rep.Site, rep.ID, onlyOwner)
@@ -589,6 +635,11 @@ func (s *Server) reportSigned(w http.ResponseWriter, r *http.Request) {
 // fixSigned serves the signed fix check exactly as the worker signed it.
 func (s *Server) fixSigned(w http.ResponseWriter, r *http.Request) {
 	s.serveEnvelope(w, r, "fix check", func(v *reportView) []byte { return v.fixEnvelope })
+}
+
+// bisectSigned serves the signed bisect exactly as the worker signed it.
+func (s *Server) bisectSigned(w http.ResponseWriter, r *http.Request) {
+	s.serveEnvelope(w, r, "bisect", func(v *reportView) []byte { return v.bisectEnvelope })
 }
 
 func (s *Server) serveEnvelope(w http.ResponseWriter, r *http.Request, what string, pick func(*reportView) []byte) {

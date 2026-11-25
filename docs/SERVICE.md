@@ -98,6 +98,7 @@ reprobot worker \
 | `file` | a reporter file, zero or more; stored next to `repro.yaml` under its own name |
 | `reporter` | optional name, at most 256 bytes |
 | `fix_commit` | optional commit hash or tag that claims to fix the bug; asks for a fix check (see below) |
+| `good_commit` | optional commit hash or tag on the main line that does not have the bug; asks for a bisect (see below) |
 
 - Header `Idempotency-Key` is optional. Sending the same key again returns
   `200` with the ids of the first report and stores nothing.
@@ -106,7 +107,7 @@ reprobot worker \
   `repro.yaml`.
 - Only the `project` field of `repro.yaml` is checked here: it must name a
   file in `--projects`. The worker validates the rest.
-- `fix_commit` must be a commit hash or a tag name, the same rule as
+- `fix_commit` and `good_commit` must be a commit hash or a tag name, the same rule as
   `commit` in `repro.yaml`. Anything else (`HEAD~1`, `a..b`, a flag) gets
   `400`.
 - Success is `202` with `{"report_id", "job_id", "status_url"}`. Errors are
@@ -136,6 +137,14 @@ did not reproduce, because then the fix commit is not built) and `signed`.
 The verdicts are the same as `reprobot run --fix` (see Fix check in
 DESIGN.md).
 
+With a `good_commit` the report also has `bisect`: `good_commit` as sent,
+then, once the job is done, `state` (`FOUND`, `RANGE` or `CANNOT_TELL`),
+`reason`, `first_bad` and `last_good` (for `FOUND` and `RANGE`),
+`untested` (for `RANGE`: commits between them that gave no answer),
+`commits` (how many commits were in range), `steps` (each commit run: its
+`verdict` good, bad or skip, `state` and `reason`) and `signed`. The
+verdicts are the same as `reprobot run --bisect` (see Bisect in DESIGN.md).
+
 `GET /reports/{id}` is the same as an HTML page, with no JavaScript.
 
 `GET /v1/reports/{id}/signed` returns the signed result (see Signed results
@@ -145,6 +154,7 @@ has one.
 
 `GET /v1/reports/{id}/fix/signed` returns the signed fix check, with the
 same rules. It is `404` when the report has no signed fix check.
+`GET /v1/reports/{id}/bisect/signed` does the same for the bisect.
 
 `GET /v1/signing-key` returns the public key from `--sign-pub` as PEM. It
 needs no token, and is `404` when no key is set.
@@ -169,8 +179,9 @@ curl -s -H "Authorization: Bearer $REPROBOT_TOKEN" \
 ```
 
 A fix check is signed too, as one envelope that holds the report id, both
-runs and the verdict. `reprobot verify` checks either kind and says which
-it is:
+runs and the verdict, and so is a bisect (the report run, every step and
+the verdict). `reprobot verify` checks all three kinds and says which it
+is:
 
 ```sh
 curl -s -H "Authorization: Bearer $REPROBOT_TOKEN" \
@@ -278,7 +289,7 @@ follow the same rules as uploads.
   all; the last error is kept in `reports.github_comment_error`. A job that
   failed for good gets no comment.
 
-Not built yet: the webhook does not set a `fix_commit`, and new comments
+Not built yet: the webhook does not set a `fix_commit` or `good_commit`, and new comments
 on the advisory are not read (a reporter who fixes a block files a new
 report). The tests use a delivery written from GitHub's documented schema
 (`internal/github/testdata`); check it against a real delivery once the
@@ -293,6 +304,10 @@ A job is `queued`, `running`, `done` or `failed`.
   the job. A worker that lost its lease cannot write a result.
 - A report with a `fix_commit` runs both commits in one job. A runner error
   on either run retries the whole job.
+- A report with a `good_commit` runs the whole bisect in the same job, so
+  it holds its lease for longer; the heartbeat keeps it. A runner error on
+  any step retries the whole job. Builds are cached per commit, so the
+  retry is quick up to where it stopped.
 - A runner error (Docker down, disk full) puts the job back in the queue
   after a backoff of 1s * 2^attempts (2s, then 4s; at most 5 minutes). After
   3 attempts the job is `failed`. Bad input is not an error: it gives a

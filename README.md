@@ -167,6 +167,36 @@ not build. The exit code is `0` only for `FIXED`. With `--sign-key` the
 whole fix check is signed. The service does the same when a report is sent
 with a `fix_commit` field (see [docs/SERVICE.md](docs/SERVICE.md)).
 
+**Find the commit that added the bug.** Add `--bisect GOOD`, where GOOD is
+an older commit on the main line that does not have the bug:
+
+```sh
+reprobot run --project project.yaml --bisect v1.0 repro.yaml
+```
+
+```
+== bisect ==
+  7ebe8dc3752b  good  NOT_REPRODUCED         no crash
+  52ffc114cf64  skip  BUILD_FAILED           BUILD_FAILED (profile "asan" did not build at 52ffc11), so this commit cannot tell
+  967e76a49396  good  NOT_REPRODUCED         no crash
+  c83624ec0b6c  good  NOT_REPRODUCED         no crash
+  663ae131745f  bad   REPRODUCED_AS_CLAIMED  the same crash
+
+bisect:    FOUND
+reason:    the crash first appears in 663ae13; its parent c83624e has no crash
+first bad: 663ae131745fbe57821608ea22c413884ddaced3
+last good: c83624ec0b6cf2f7f97f33317fa04d0b774b068f
+```
+
+It runs the report on GOOD first, then halves the commits between GOOD and
+the report commit. A commit counts as bad only with the same crash as on the
+report commit; a commit that does not build, times out or crashes another
+way is skipped. `FOUND` names the exact commit. `RANGE` means skipped
+commits hide it, and gives the last good and first bad commit around them.
+`CANNOT_TELL` means the bisect could not start, for example the crash is
+already on GOOD. The exit code is `0` only for `FOUND`. The service does the
+same with a `good_commit` field.
+
 ## Run it as a service
 
 `reprobot serve` takes reports over HTTP and shows result pages.
@@ -205,6 +235,7 @@ Early. What works and what is next:
 - ✅ service with tokens, per-token access and rate limits
 - ✅ signed results
 - ✅ fix check, in the CLI (`--fix`) and the service (`fix_commit`)
+- ✅ bisect to the first commit with the crash, in the CLI (`--bisect`) and the service (`good_commit`)
 - ✅ GitHub App code for private vulnerability reports (tested against GitHub's documented payloads; not yet run with a registered App)
 - ⬜ OSS-Fuzz project import
 - ⬜ gVisor as the default sandbox

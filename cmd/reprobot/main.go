@@ -7,7 +7,7 @@ import (
 )
 
 const usage = `usage:
-  reprobot run --project project.yaml [--cache DIR] [--fix COMMIT] [--json | --sign-key KEY] repro.yaml
+  reprobot run --project project.yaml [--cache DIR] [--fix COMMIT | --bisect GOOD] [--json | --sign-key KEY] repro.yaml
   reprobot serve [flags]
   reprobot worker [flags]
   reprobot token NAME >> tokens-file

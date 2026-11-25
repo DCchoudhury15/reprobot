@@ -66,7 +66,7 @@ func TestExitCodeForEveryState(t *testing.T) {
 			return &result.Result{State: state, Reason: "r"}, nil
 		}
 		var out, errOut bytes.Buffer
-		code := runMain(context.Background(), []string{"--project", "p.yaml", "--cache", "/c", "r.yaml"}, &out, &errOut, fake)
+		code := runMain(context.Background(), []string{"--project", "p.yaml", "--cache", "/c", "r.yaml"}, &out, &errOut, fake, nil)
 		if code != want {
 			t.Errorf("%s: exit %d, want %d", state, code, want)
 		}
@@ -86,7 +86,7 @@ func TestRunMainErrors(t *testing.T) {
 		return nil, errors.New("docker: cannot connect")
 	}
 	var out, errOut bytes.Buffer
-	if code := runMain(context.Background(), []string{"r.yaml"}, &out, &errOut, fake); code != exitUsage {
+	if code := runMain(context.Background(), []string{"r.yaml"}, &out, &errOut, fake, nil); code != exitUsage {
 		t.Errorf("usage error: exit %d, want %d", code, exitUsage)
 	}
 	if called {
@@ -97,7 +97,7 @@ func TestRunMainErrors(t *testing.T) {
 	}
 
 	errOut.Reset()
-	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "r"}, &out, &errOut, fake); code != exitInfra {
+	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "r"}, &out, &errOut, fake, nil); code != exitInfra {
 		t.Errorf("infrastructure error: exit %d, want %d", code, exitInfra)
 	}
 	if !strings.Contains(errOut.String(), "docker: cannot connect") {
@@ -119,7 +119,7 @@ func TestDefaultCacheDir(t *testing.T) {
 	} {
 		t.Setenv("XDG_CACHE_HOME", xdg)
 		var out, errOut bytes.Buffer
-		runMain(context.Background(), []string{"--project", "p", "r"}, &out, &errOut, fake)
+		runMain(context.Background(), []string{"--project", "p", "r"}, &out, &errOut, fake, nil)
 		if got.CacheDir != want {
 			t.Errorf("XDG_CACHE_HOME=%q: cache %q, want %q", xdg, got.CacheDir, want)
 		}
@@ -187,7 +187,7 @@ func TestJSONOutput(t *testing.T) {
 	want := sampleResult()
 	var out, errOut bytes.Buffer
 	fake := func(context.Context, runner.Options) (*result.Result, error) { return want, nil }
-	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--json", "r"}, &out, &errOut, fake); code != 0 {
+	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--json", "r"}, &out, &errOut, fake, nil); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	var got result.Result
@@ -233,7 +233,7 @@ func TestRunFix(t *testing.T) {
 				args = append(args, "--json")
 			}
 			var out, errOut bytes.Buffer
-			code := runMain(context.Background(), append(args, "r"), &out, &errOut, fake)
+			code := runMain(context.Background(), append(args, "r"), &out, &errOut, fake, nil)
 			if code != tt.wantCode {
 				t.Errorf("exit %d, want %d (stderr %q)", code, tt.wantCode, errOut.String())
 			}
@@ -274,7 +274,7 @@ func TestRunFix(t *testing.T) {
 		return &result.Result{State: result.ReproducedAsClaimed}, nil
 	}
 	var out, errOut bytes.Buffer
-	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--fix", "b", "r"}, &out, &errOut, fake); code != exitInfra {
+	if code := runMain(context.Background(), []string{"--project", "p", "--cache", "/c", "--fix", "b", "r"}, &out, &errOut, fake, nil); code != exitInfra {
 		t.Errorf("fix run infrastructure error: exit %d, want %d", code, exitInfra)
 	}
 }

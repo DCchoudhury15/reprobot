@@ -424,3 +424,83 @@ func TestWorkerFixCheck(t *testing.T) {
 		t.Error("result envelope missing next to the fix check")
 	}
 }
+
+func TestWorkerBisect(t *testing.T) {
+	st := storetest.New(t)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crash := &result.Crash{Kind: "heap-buffer-overflow", Signature: "A"}
+	sha := func(i int) string { return fmt.Sprintf("%040x", i+1) }
+	var mu sync.Mutex
+	var ran []string
+	run := func(ctx context.Context, o runner.Options) (*result.Result, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		ran = append(ran, o.Commit)
+		commit := o.Commit
+		if commit == "" {
+			commit = sha(7)
+		}
+		var i int
+		fmt.Sscanf(commit, "%x", &i)
+		r := &result.Result{State: result.NotReproduced, Inputs: result.Inputs{Commit: commit}}
+		if i-1 >= 5 {
+			r.State, r.Crash = result.ReproducedAsClaimed, crash
+		}
+		return r, nil
+	}
+	var paths []string
+	path := func(_ context.Context, o runner.Options, good, bad string) (string, []string, error) {
+		mu.Lock()
+		paths = append(paths, o.ProjectPath+" "+good+" "+bad)
+		mu.Unlock()
+		var out []string
+		for i := 1; i <= 7; i++ {
+			out = append(out, sha(i))
+		}
+		return sha(0), out, nil
+	}
+	id, _, _, err := st.CreateReport(context.Background(), store.ReportInput{Project: "p", Dir: "/d/b", GoodCommit: "v1.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := newReport(t, st, "p", "/d/plain")
+	start(t, &worker.Worker{Store: st, Run: run, Path: path, ProjectsDir: "/p", CacheDir: "/c",
+		Lease: 10 * time.Second, PollInterval: 20 * time.Millisecond, SignKey: priv})
+	for _, r := range []uuid.UUID{id, plain} {
+		waitFor(t, 15*time.Second, "job done", func() bool { return getReport(t, st, r).JobState == store.JobDone })
+	}
+
+	mu.Lock()
+	if len(paths) != 1 || paths[0] != "/p/p.yaml v1.0 "+sha(7) {
+		t.Errorf("path calls %q", paths)
+	}
+	mu.Unlock()
+	if rep := getReport(t, st, plain); rep.Bisect != nil || rep.BisectEnvelope != nil {
+		t.Errorf("report without a good commit has a bisect: %+v", rep.Bisect)
+	}
+	rep := getReport(t, st, id)
+	if rep.Bisect == nil || rep.Bisect.Bisect != result.Found || rep.Bisect.FirstBad != sha(5) {
+		t.Fatalf("bisect %+v", rep.Bisect)
+	}
+	env, err := sign.Decode(rep.BisectEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sign.VerifyAs(env, pub, sign.PayloadType, sign.FixPayloadType); err == nil {
+		t.Error("signed bisect verified as a result or a fix check")
+	}
+	payload, err := sign.VerifyAs(env, pub, sign.BisectPayloadType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got result.Bisect
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ReportID != id.String() || got.Report == nil || got.Report.ReportID != id.String() || got.FirstBad != sha(5) {
+		t.Errorf("signed bisect: report %q, report.report %v, first bad %q", got.ReportID, got.Report, got.FirstBad)
+	}
+}

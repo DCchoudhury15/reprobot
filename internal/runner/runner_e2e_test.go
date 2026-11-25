@@ -334,3 +334,56 @@ func TestE2EStaticRuntime(t *testing.T) {
 		t.Errorf("crashed %d of 3 runs", res.Crashed)
 	}
 }
+
+// A bisect from the fixed parser to the commit with the bug steps around
+// the commit that does not build and names the commit that dropped the
+// length check.
+func TestE2EBisect(t *testing.T) {
+	h := testutil.NewTinyparseHistory(t)
+	cache := t.TempDir()
+	bad := h.Commits[len(h.Commits)-1]
+	projectPath, reproPath := testutil.WriteInputs(t, h.RepoDir, bad)
+	o := Options{ProjectPath: projectPath, ReproPath: reproPath, CacheDir: cache}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	before, err := Run(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, before, result.ReproducedAsClaimed)
+	b, err := Bisect(ctx, Run, CommitPath, o, before, h.Commits[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range b.Steps {
+		t.Logf("%s %s %s %s", s.Commit[:12], s.Verdict, s.State, s.Reason)
+	}
+	if b.Bisect != result.Found || b.FirstBad != h.Commits[h.BugAt] || b.LastGood != h.Commits[h.BugAt-1] {
+		t.Fatalf("bisect %s first_bad=%s last_good=%s: %s", b.Bisect, b.FirstBad, b.LastGood, b.Reason)
+	}
+	if b.Commits != len(h.Commits)-1 {
+		t.Errorf("commits = %d, want %d", b.Commits, len(h.Commits)-1)
+	}
+	broken := false
+	for _, s := range b.Steps {
+		if s.Commit == h.Commits[h.Broken] {
+			broken = true
+			if s.Verdict != result.StepSkip || s.State != result.BuildFailed {
+				t.Errorf("broken commit: %s %s", s.Verdict, s.State)
+			}
+		}
+	}
+	if !broken {
+		t.Error("the bisect never ran the commit that does not build; the fixture no longer tests skipping")
+	}
+
+	// The good commit must be on the main line before the report commit.
+	b, err = Bisect(ctx, Run, CommitPath, o, before, bad)
+	if err != nil || b.Bisect != result.NoAnswer || !strings.Contains(b.Reason, "is the report commit") {
+		t.Errorf("good == bad: %+v, %v", b, err)
+	}
+	b, err = Bisect(ctx, Run, CommitPath, o, before, "v404")
+	if err != nil || b.Bisect != result.NoAnswer || !strings.Contains(b.Reason, "does not exist") {
+		t.Errorf("unknown good commit: %+v, %v", b, err)
+	}
+}

@@ -434,3 +434,54 @@ func TestLine(t *testing.T) {
 		}
 	}
 }
+
+func TestFirstParentPath(t *testing.T) {
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "--quiet", "-b", "main")
+	commit := func(msg string) string {
+		gitIn(t, dir, "commit", "--quiet", "--allow-empty", "-m", msg)
+		return gitIn(t, dir, "rev-parse", "HEAD")
+	}
+	a := commit("a")
+	b := commit("b")
+	gitIn(t, dir, "checkout", "--quiet", "-b", "side")
+	d := commit("d")
+	e := commit("e")
+	gitIn(t, dir, "checkout", "--quiet", "main")
+	c := commit("c")
+	gitIn(t, dir, "merge", "--quiet", "--no-ff", "-m", "m", "side")
+	m := gitIn(t, dir, "rev-parse", "HEAD")
+	f := commit("f")
+	gitIn(t, dir, "checkout", "--quiet", "--orphan", "other")
+	z := commit("z")
+	_ = e
+
+	ctx := context.Background()
+	mirror, _, err := Resolve(ctx, t.TempDir(), dir, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := FirstParentPath(ctx, mirror, a, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{b, c, m, f}; strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("path a..f = %v, want %v (b c m f)", got, want)
+	}
+	if got, err := FirstParentPath(ctx, mirror, c, m); err != nil || len(got) != 1 || got[0] != m {
+		t.Errorf("path c..m = %v, %v; want [m]", got, err)
+	}
+	for _, bad := range []struct{ name, good, bad string }{
+		{"same commit", f, f},
+		{"good after bad", f, a},
+		{"good on a merged branch", d, f},
+		{"unrelated history", z, f},
+	} {
+		if got, err := FirstParentPath(ctx, mirror, bad.good, bad.bad); !errors.Is(err, ErrBadRange) {
+			t.Errorf("%s: got %v, %v; want ErrBadRange", bad.name, got, err)
+		}
+	}
+	if _, err := FirstParentPath(ctx, mirror, a[:7], f); err == nil || errors.Is(err, ErrBadRange) {
+		t.Errorf("short id: err = %v, want a plain error", err)
+	}
+}

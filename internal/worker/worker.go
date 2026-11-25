@@ -49,6 +49,8 @@ type Worker struct {
 	// it. Results are signed with their report id set, so a signed verdict
 	// names the report it is for.
 	SignKey ed25519.PrivateKey
+	// Path finds the commits of a bisect; default runner.CommitPath.
+	Path runner.PathFunc
 }
 
 // Serve runs the loops until ctx is cancelled and all of them have
@@ -135,6 +137,17 @@ func (w *Worker) process(ctx context.Context, owner string, job *store.Job) {
 	if err == nil && res != nil && job.FixCommit != "" {
 		fix, err = runner.CheckFix(runCtx, w.Run, opts, res, job.FixCommit)
 	}
+	// A bisect also runs in the same job; the heartbeat keeps the lease
+	// for as long as it takes. Builds are cached per commit, so a retry
+	// runs again quickly up to where it stopped.
+	var bisect *result.Bisect
+	if err == nil && res != nil && job.GoodCommit != "" {
+		path := w.Path
+		if path == nil {
+			path = runner.CommitPath
+		}
+		bisect, err = runner.Bisect(runCtx, w.Run, path, opts, res, job.GoodCommit)
+	}
 	leaseLost := errors.Is(context.Cause(runCtx), store.ErrLeaseLost)
 	cancel(nil)
 	<-hbDone
@@ -158,20 +171,25 @@ func (w *Worker) process(ctx context.Context, owner string, job *store.Job) {
 		err = w.Store.Fail(sctx, job.ID, owner, "runner returned no result")
 	default:
 		res.ReportID = job.ReportID.String()
-		out := store.Outcome{Result: res, Fix: fix}
+		out := store.Outcome{Result: res, Fix: fix, Bisect: bisect}
+		attrs := []any{"state", res.State}
 		if fix != nil {
 			fix.ReportID = res.ReportID
 			if fix.FixRun != nil {
 				fix.FixRun.ReportID = res.ReportID
 			}
-			log.Info("job done", "state", res.State, "fix", fix.Fix)
-		} else {
-			log.Info("job done", "state", res.State)
+			attrs = append(attrs, "fix", fix.Fix)
 		}
-		if out.Envelope, err = w.envelope(sign.PayloadType, res); err == nil {
-			if fix != nil {
-				out.FixEnvelope, err = w.envelope(sign.FixPayloadType, fix)
-			}
+		if bisect != nil {
+			bisect.ReportID = res.ReportID
+			attrs = append(attrs, "bisect", bisect.Bisect)
+		}
+		log.Info("job done", attrs...)
+		if out.Envelope, err = w.envelope(sign.PayloadType, res); err == nil && fix != nil {
+			out.FixEnvelope, err = w.envelope(sign.FixPayloadType, fix)
+		}
+		if err == nil && bisect != nil {
+			out.BisectEnvelope, err = w.envelope(sign.BisectPayloadType, bisect)
 		}
 		if err == nil {
 			err = w.Store.CompleteJob(sctx, job.ID, owner, out)

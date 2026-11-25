@@ -100,6 +100,9 @@ type ReportInput struct {
 	// FixCommit, when set, asks for a fix check: the worker also runs the
 	// report on this commit. Optional.
 	FixCommit string
+	// GoodCommit, when set, asks for a bisect: the worker also looks for
+	// the first commit with the crash after this one. Optional.
+	GoodCommit string
 	// MaxPerHour, when above 0 and Owner is set, caps the reports Owner
 	// may create in any hour. A repeat of an existing IdempotencyKey does
 	// not count.
@@ -151,13 +154,13 @@ func (s *Store) CreateReport(ctx context.Context, in ReportInput) (reportID uuid
 	// then inserts nothing.
 	err = tx.QueryRow(ctx, `
 		INSERT INTO reports (id, project, reporter, idempotency_key, repro_hash, dir, owner, fix_commit,
-			github_installation, github_repo, github_ghsa)
+			github_installation, github_repo, github_ghsa, good_commit)
 		VALUES (coalesce($1::uuid, gen_random_uuid()), $2, nullif($3, ''), nullif($4, ''), nullif($5, ''), $6, nullif($7, ''), nullif($8, ''),
-			$9, $10, $11)
+			$9, $10, $11, nullif($12, ''))
 		ON CONFLICT ((coalesce(owner, '')), idempotency_key) DO NOTHING
 		RETURNING id`,
 		idArg, in.Project, in.Reporter, in.IdempotencyKey, in.ReproHash, in.Dir, in.Owner, in.FixCommit,
-		gh.installation, gh.repo, gh.ghsa,
+		gh.installation, gh.repo, gh.ghsa, in.GoodCommit,
 	).Scan(&reportID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		tx.Rollback(ctx)
@@ -198,6 +201,7 @@ type Job struct {
 	Project        string
 	Dir            string
 	FixCommit      string // empty when the report asks for no fix check
+	GoodCommit     string // empty when the report asks for no bisect
 	Attempts       int    // including this one
 	MaxAttempts    int
 	LeaseExpiresAt time.Time
@@ -274,9 +278,9 @@ func (s *Store) claimOnce(ctx context.Context, workerID string, lease time.Durat
 			updated_at = now()
 		FROM reports r
 		WHERE j.id = $1 AND r.id = j.report_id
-		RETURNING j.id, j.report_id, r.project, r.dir, coalesce(r.fix_commit, ''), j.attempts, j.max_attempts, j.lease_expires_at`,
+		RETURNING j.id, j.report_id, r.project, r.dir, coalesce(r.fix_commit, ''), coalesce(r.good_commit, ''), j.attempts, j.max_attempts, j.lease_expires_at`,
 		id, workerID, lease.Seconds(),
-	).Scan(&j.ID, &j.ReportID, &j.Project, &j.Dir, &j.FixCommit, &j.Attempts, &j.MaxAttempts, &j.LeaseExpiresAt)
+	).Scan(&j.ID, &j.ReportID, &j.Project, &j.Dir, &j.FixCommit, &j.GoodCommit, &j.Attempts, &j.MaxAttempts, &j.LeaseExpiresAt)
 	if err != nil {
 		return nil, false, err
 	}
@@ -325,6 +329,9 @@ type Outcome struct {
 	// Fix is the fix check, when the report asked for one.
 	Fix         *result.FixCheck
 	FixEnvelope []byte // the signed fix check; nil when not signed
+	// Bisect is the bisect, when the report asked for one.
+	Bisect         *result.Bisect
+	BisectEnvelope []byte // the signed bisect; nil when not signed
 }
 
 // CompleteJob stores the outcome and marks the job done, in one
@@ -347,6 +354,15 @@ func (s *Store) CompleteJob(ctx context.Context, jobID int64, workerID string, o
 			return err
 		}
 		fixState, fixData = string(out.Fix.Fix), json.RawMessage(jsonbSafe(b))
+	}
+	var bisectState string
+	var bisectData any
+	if out.Bisect != nil {
+		b, err := json.Marshal(out.Bisect)
+		if err != nil {
+			return err
+		}
+		bisectState, bisectData = string(out.Bisect.Bisect), json.RawMessage(jsonbSafe(b))
 	}
 	var signature, site string
 	if res.Crash != nil {
@@ -371,10 +387,12 @@ func (s *Store) CompleteJob(ctx context.Context, jobID int64, workerID string, o
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO results (report_id, state, signature, site, result, envelope, fix_state, fix, fix_envelope)
-		VALUES ($1, $2, nullif($3, ''), nullif($4, ''), $5, $6, nullif($7, ''), $8, $9)`,
+		INSERT INTO results (report_id, state, signature, site, result, envelope, fix_state, fix, fix_envelope,
+			bisect_state, bisect, bisect_envelope)
+		VALUES ($1, $2, nullif($3, ''), nullif($4, ''), $5, $6, nullif($7, ''), $8, $9, nullif($10, ''), $11, $12)`,
 		reportID, string(res.State), cleanText(signature), cleanText(site), json.RawMessage(jsonbSafe(data)), envelopeArg(out.Envelope),
 		fixState, fixData, envelopeArg(out.FixEnvelope),
+		bisectState, bisectData, envelopeArg(out.BisectEnvelope),
 	); err != nil {
 		return err
 	}
@@ -441,38 +459,41 @@ func (s *Store) CheckRate(ctx context.Context, owner string, maxPerHour int) err
 
 // Report is a report with the state of its job and its result, if any.
 type Report struct {
-	ID          uuid.UUID
-	Project     string
-	Reporter    string
-	Owner       string // empty when submitted without a token
-	ReproHash   string
-	Dir         string
-	CreatedAt   time.Time
-	JobID       int64
-	JobState    string
-	Attempts    int
-	MaxAttempts int
-	LastError   string
-	Signature   string
-	Site        string
-	Result      *result.Result   // nil until the job is done
-	Envelope    []byte           // the signed result; nil when not signed
-	FixCommit   string           // empty when no fix check was asked for
-	Fix         *result.FixCheck // nil until the job is done, or without FixCommit
-	FixEnvelope []byte           // the signed fix check; nil when not signed
+	ID             uuid.UUID
+	Project        string
+	Reporter       string
+	Owner          string // empty when submitted without a token
+	ReproHash      string
+	Dir            string
+	CreatedAt      time.Time
+	JobID          int64
+	JobState       string
+	Attempts       int
+	MaxAttempts    int
+	LastError      string
+	Signature      string
+	Site           string
+	Result         *result.Result   // nil until the job is done
+	Envelope       []byte           // the signed result; nil when not signed
+	FixCommit      string           // empty when no fix check was asked for
+	Fix            *result.FixCheck // nil until the job is done, or without FixCommit
+	FixEnvelope    []byte           // the signed fix check; nil when not signed
+	GoodCommit     string           // empty when no bisect was asked for
+	Bisect         *result.Bisect   // nil until the job is done, or without GoodCommit
+	BisectEnvelope []byte           // the signed bisect; nil when not signed
 }
 
 // GetReport returns one report. It returns ErrNotFound if there is none.
 func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 	r := &Report{}
-	var raw, fixRaw []byte
-	var env, fixEnv *string
+	var raw, fixRaw, bisectRaw []byte
+	var env, fixEnv, bisectEnv *string
 	err := s.pool.QueryRow(ctx, `
 		SELECT r.id, r.project, coalesce(r.reporter, ''), coalesce(r.owner, ''), coalesce(r.repro_hash, ''), r.dir, r.created_at,
-			coalesce(r.fix_commit, ''),
+			coalesce(r.fix_commit, ''), coalesce(r.good_commit, ''),
 			coalesce(j.id, 0), coalesce(j.state, ''), coalesce(j.attempts, 0), coalesce(j.max_attempts, 0),
 			coalesce(j.last_error, ''), coalesce(res.signature, ''), coalesce(res.site, ''), res.result, res.envelope,
-			res.fix, res.fix_envelope
+			res.fix, res.fix_envelope, res.bisect, res.bisect_envelope
 		FROM reports r
 		LEFT JOIN LATERAL (
 			SELECT * FROM jobs WHERE jobs.report_id = r.id ORDER BY jobs.id DESC LIMIT 1
@@ -480,9 +501,9 @@ func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 		LEFT JOIN results res ON res.report_id = r.id
 		WHERE r.id = $1`, id,
 	).Scan(&r.ID, &r.Project, &r.Reporter, &r.Owner, &r.ReproHash, &r.Dir, &r.CreatedAt,
-		&r.FixCommit,
+		&r.FixCommit, &r.GoodCommit,
 		&r.JobID, &r.JobState, &r.Attempts, &r.MaxAttempts,
-		&r.LastError, &r.Signature, &r.Site, &raw, &env, &fixRaw, &fixEnv)
+		&r.LastError, &r.Signature, &r.Site, &raw, &env, &fixRaw, &fixEnv, &bisectRaw, &bisectEnv)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -505,6 +526,15 @@ func (s *Store) GetReport(ctx context.Context, id uuid.UUID) (*Report, error) {
 		r.Fix = &result.FixCheck{}
 		if err := json.Unmarshal(fixRaw, r.Fix); err != nil {
 			return nil, fmt.Errorf("decode fix check: %w", err)
+		}
+	}
+	if bisectEnv != nil {
+		r.BisectEnvelope = []byte(*bisectEnv)
+	}
+	if bisectRaw != nil {
+		r.Bisect = &result.Bisect{}
+		if err := json.Unmarshal(bisectRaw, r.Bisect); err != nil {
+			return nil, fmt.Errorf("decode bisect: %w", err)
 		}
 	}
 	return r, nil
