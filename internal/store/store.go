@@ -104,6 +104,16 @@ type ReportInput struct {
 	// may create in any hour. A repeat of an existing IdempotencyKey does
 	// not count.
 	MaxPerHour int
+	// GitHub, when set, is the private vulnerability report this report
+	// came from. Its verdict is then posted back as a comment.
+	GitHub *GitHubRef
+}
+
+// GitHubRef names a repository security advisory.
+type GitHubRef struct {
+	Installation int64
+	Repo         string // owner/name
+	GHSA         string
 }
 
 // CreateReport stores a report and queues one job for it, in one
@@ -114,6 +124,13 @@ func (s *Store) CreateReport(ctx context.Context, in ReportInput) (reportID uuid
 	var idArg any
 	if in.ID != uuid.Nil {
 		idArg = in.ID
+	}
+	var gh struct {
+		installation any
+		repo, ghsa   any
+	}
+	if in.GitHub != nil {
+		gh.installation, gh.repo, gh.ghsa = in.GitHub.Installation, in.GitHub.Repo, in.GitHub.GHSA
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -133,11 +150,14 @@ func (s *Store) CreateReport(ctx context.Context, in ReportInput) (reportID uuid
 	// the same time: the second insert waits for the first transaction and
 	// then inserts nothing.
 	err = tx.QueryRow(ctx, `
-		INSERT INTO reports (id, project, reporter, idempotency_key, repro_hash, dir, owner, fix_commit)
-		VALUES (coalesce($1::uuid, gen_random_uuid()), $2, nullif($3, ''), nullif($4, ''), nullif($5, ''), $6, nullif($7, ''), nullif($8, ''))
+		INSERT INTO reports (id, project, reporter, idempotency_key, repro_hash, dir, owner, fix_commit,
+			github_installation, github_repo, github_ghsa)
+		VALUES (coalesce($1::uuid, gen_random_uuid()), $2, nullif($3, ''), nullif($4, ''), nullif($5, ''), $6, nullif($7, ''), nullif($8, ''),
+			$9, $10, $11)
 		ON CONFLICT ((coalesce(owner, '')), idempotency_key) DO NOTHING
 		RETURNING id`,
 		idArg, in.Project, in.Reporter, in.IdempotencyKey, in.ReproHash, in.Dir, in.Owner, in.FixCommit,
+		gh.installation, gh.repo, gh.ghsa,
 	).Scan(&reportID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		tx.Rollback(ctx)

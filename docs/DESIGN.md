@@ -238,10 +238,10 @@ its own.
 
 ## Later
 
-GitHub App for private vulnerability reports, OSS-Fuzz project import,
-bisect, Firecracker.
+OSS-Fuzz project import, bisect, Firecracker.
 Built since this list was first written: the Postgres job queue with
 leases, the intake API with tokens and rate limits, the result page, signed
 results, the fix check in the CLI (`run --fix`) and the service
-(`fix_commit`), and the crash check from outside the process
-(`reprobot-watch`).
+(`fix_commit`), the crash check from outside the process
+(`reprobot-watch`), and the GitHub App intake for private vulnerability
+reports (see SERVICE.md).

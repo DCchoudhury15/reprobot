@@ -1,0 +1,83 @@
+{
+  "action": "reported",
+  "repository_advisory": {
+    "ghsa_id": "GHSA-8f4m-hccc-8qph",
+    "cve_id": null,
+    "url": "https://api.github.com/repos/octo-org/tinyparse/security-advisories/GHSA-8f4m-hccc-8qph",
+    "html_url": "https://github.com/octo-org/tinyparse/security/advisories/GHSA-8f4m-hccc-8qph",
+    "summary": "Heap buffer overflow in parse_header",
+    "description": "### Summary\n\n`parse_header` in tinyparse.c copies up to 255 bytes into a 16 byte heap buffer.\n\n### Reproducer for reprobot\n\n```reprobot\nversion: 1\nproject: tinyparse\ncommit: COMMIT\nprofile: asan\nrun:\n  cmd: [\"bin/tinyparse\", \"poc/input.bin\"]\n  timeout_seconds: 20\n  repeat: 3\nfiles:\n  - input.bin\nclaim:\n  sanitizer: address\n  kind: heap-buffer-overflow\n  frame: parse_header\n  text: |\n    The memcpy in parse_header in tinyparse.c copies up to 255 bytes into a\n    16 byte heap buffer.\n```\n\n```reprobot-file input.bin\nINPUT\n```\n\n### Impact\n\nHeap buffer overflow when parsing an untrusted file.\n",
+    "severity": "high",
+    "author": null,
+    "publisher": null,
+    "identifiers": [
+      {
+        "value": "GHSA-8f4m-hccc-8qph",
+        "type": "GHSA"
+      }
+    ],
+    "state": "triage",
+    "created_at": "2026-11-25T09:12:44Z",
+    "updated_at": "2026-11-25T09:12:44Z",
+    "published_at": null,
+    "closed_at": null,
+    "withdrawn_at": null,
+    "submission": {
+      "accepted": false
+    },
+    "vulnerabilities": [
+      {
+        "package": {
+          "ecosystem": "other",
+          "name": "tinyparse"
+        },
+        "vulnerable_version_range": "< 1.1",
+        "patched_versions": null,
+        "vulnerable_functions": [
+          "parse_header"
+        ]
+      }
+    ],
+    "cvss_severities": null,
+    "cwes": [
+      {
+        "cwe_id": "CWE-122",
+        "name": "Heap-based Buffer Overflow"
+      }
+    ],
+    "cwe_ids": [
+      "CWE-122"
+    ],
+    "credits": null,
+    "credits_detailed": null,
+    "collaborating_users": null,
+    "collaborating_teams": null,
+    "private_fork": null
+  },
+  "repository": {
+    "id": 731122334,
+    "node_id": "R_kgDOK5Wf3g",
+    "name": "tinyparse",
+    "full_name": "octo-org/tinyparse",
+    "private": false,
+    "owner": {
+      "login": "octo-org",
+      "id": 6811672,
+      "type": "Organization"
+    },
+    "html_url": "https://github.com/octo-org/tinyparse"
+  },
+  "organization": {
+    "login": "octo-org",
+    "id": 6811672
+  },
+  "installation": {
+    "id": 52219614,
+    "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uNTIyMTk2MTQ="
+  },
+  "sender": {
+    "login": "mona",
+    "id": 583231,
+    "type": "User"
+  }
+}

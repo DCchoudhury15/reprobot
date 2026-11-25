@@ -176,6 +176,7 @@ with a `fix_commit` field (see [docs/SERVICE.md](docs/SERVICE.md)).
 - ⏱️ **Rate limits.** Each token can send 20 reports an hour by default.
 - 🔁 **Safe retries.** The same `Idempotency-Key` never creates a second report.
 - ✍️ **Signing.** Workers can sign every result, and the API serves the public key.
+- 🐙 **GitHub App.** Private vulnerability reports on GitHub are checked, and the verdict is posted back as a comment on the advisory.
 
 Setup and API: [docs/SERVICE.md](docs/SERVICE.md).
 
@@ -204,8 +205,8 @@ Early. What works and what is next:
 - ✅ service with tokens, per-token access and rate limits
 - ✅ signed results
 - ✅ fix check, in the CLI (`--fix`) and the service (`fix_commit`)
+- ✅ GitHub App code for private vulnerability reports (tested against GitHub's documented payloads; not yet run with a registered App)
 - ⬜ OSS-Fuzz project import
-- ⬜ GitHub App for private vulnerability reports
 - ⬜ gVisor as the default sandbox
 
 ## Development

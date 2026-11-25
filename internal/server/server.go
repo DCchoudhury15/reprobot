@@ -61,6 +61,9 @@ type Server struct {
 	// SigningKeyPEM is the public key the workers sign results with,
 	// served at /v1/signing-key. nil means none is published.
 	SigningKeyPEM []byte
+	// GitHub, when set, takes private vulnerability reports from a GitHub
+	// App at POST /v1/github/webhook.
+	GitHub *GitHubIntake
 }
 
 // Handler returns the HTTP handler with all routes.
@@ -78,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/reports/{id}/fix/signed", protect(s.fixSigned))
 	mux.Handle("GET /reports/{id}", protect(s.reportPage))
 	mux.HandleFunc("GET /v1/signing-key", s.signingKey)
+	mux.HandleFunc("POST /v1/github/webhook", s.githubWebhook)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	return mux
 }
@@ -143,6 +147,12 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	// The GitHub webhook uses "github:<GHSA id>" keys for reports without
+	// an owner. Another upload must not take one first.
+	if strings.HasPrefix(key, "github:") {
+		writeError(w, badRequest("Idempotency-Key may not start with github:"))
+		return
+	}
 	var owner string
 	if c := callerFrom(r.Context()); c != nil {
 		owner = c.name
@@ -163,17 +173,9 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reportsDir := filepath.Join(s.DataDir, "reports")
-	tmpRoot := filepath.Join(s.DataDir, "tmp")
-	for _, d := range []string{reportsDir, tmpRoot} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			writeError(w, err)
-			return
-		}
-	}
 	// Files go to a temp dir first. It is renamed into place only when the
 	// whole upload is valid, so a failed upload leaves nothing behind.
-	tmp, err := os.MkdirTemp(tmpRoot, "upload-")
+	tmp, err := s.uploadDir()
 	if err != nil {
 		writeError(w, err)
 		return
@@ -185,28 +187,43 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	resp, created, err := s.finishReport(r.Context(), tmp, up, owner, key, nil)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !created {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, resp)
+}
+
+// finishReport checks the upload in tmp (repro.yaml and the files, already
+// written), moves it into place and queues the report. created is false
+// when the idempotency key names an earlier report, which is returned.
+func (s *Server) finishReport(ctx context.Context, tmp string, up *upload, owner, key string, gh *store.GitHubRef) (resp createResponse, created bool, err error) {
 	up.hash = reproducerHash(tmp)
 	project, err := parseProject(up.repro)
 	if err != nil {
-		writeError(w, err)
-		return
+		return resp, false, err
 	}
 	if err := s.checkProject(project); err != nil {
-		writeError(w, err)
-		return
+		return resp, false, err
+	}
+	if up.wantProject != "" && project != up.wantProject {
+		return resp, false, badRequest("repro.yaml names project %q, but this repository is project %q", project, up.wantProject)
 	}
 
 	id := uuid.New()
-	dir, err := filepath.Abs(filepath.Join(reportsDir, id.String()))
+	dir, err := filepath.Abs(filepath.Join(s.DataDir, "reports", id.String()))
 	if err != nil {
-		writeError(w, err)
-		return
+		return resp, false, err
 	}
 	if err := os.Rename(tmp, dir); err != nil {
-		writeError(w, err)
-		return
+		return resp, false, err
 	}
-	reportID, jobID, created, err := s.Store.CreateReport(r.Context(), store.ReportInput{
+	reportID, jobID, created, err := s.Store.CreateReport(ctx, store.ReportInput{
 		ID:             id,
 		Project:        project,
 		Reporter:       up.reporter,
@@ -216,25 +233,20 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		ReproHash:      up.hash,
 		Dir:            dir,
 		FixCommit:      up.fixCommit,
+		GitHub:         gh,
 	})
 	if err != nil || !created {
 		// Nothing points at the new directory.
 		os.RemoveAll(dir)
 	}
 	if err != nil {
-		writeError(w, err)
-		return
+		return resp, false, err
 	}
-	resp := createResponse{
+	return createResponse{
 		ReportID:  reportID.String(),
 		JobID:     jobID,
 		StatusURL: "/v1/reports/" + reportID.String(),
-	}
-	if !created {
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, resp)
+	}, created, nil
 }
 
 type upload struct {
@@ -242,6 +254,8 @@ type upload struct {
 	reporter  string
 	fixCommit string
 	hash      string
+	// wantProject, when set, is the project the report must be for.
+	wantProject string
 }
 
 // readUpload reads the multipart body and writes repro.yaml and the

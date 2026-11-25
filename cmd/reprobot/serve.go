@@ -14,9 +14,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/DCchoudhury15/reprobot/internal/github"
 	"github.com/DCchoudhury15/reprobot/internal/runner"
 	"github.com/DCchoudhury15/reprobot/internal/server"
 	"github.com/DCchoudhury15/reprobot/internal/sign"
@@ -75,6 +77,10 @@ func serveCmd(args []string) int {
 	perHour := fs.Int("reports-per-hour", 20, "most reports one token may send in any hour; 0 means no limit (needs --tokens)")
 	signPub := fs.String("sign-pub", "", "public key of the workers' --sign-key, served at /v1/signing-key")
 	noAuth := fs.Bool("insecure-no-auth", false, "allow a non-loopback --addr without --tokens, for use behind a proxy that authenticates users")
+	ghSecret := fs.String("github-webhook-secret", "", "file with the GitHub App webhook secret; turns on POST /v1/github/webhook")
+	ghAppID := fs.String("github-app-id", "", "GitHub App client ID or app ID, to comment on reports that cannot be taken in")
+	ghAppKey := fs.String("github-app-key", "", "GitHub App private key (PEM file), with --github-app-id")
+	ghAPI := fs.String("github-api-url", github.DefaultBaseURL, "GitHub REST API base URL (for GitHub Enterprise Server)")
 	if code := parseFlags(fs, args, "db", "data", "projects"); code >= 0 {
 		return code
 	}
@@ -111,6 +117,20 @@ func serveCmd(args []string) int {
 	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
 		return fail(err)
 	}
+	app, err := loadGitHubApp(*ghAppID, *ghAppKey, *ghAPI)
+	if err != nil {
+		return fail(err)
+	}
+	var intake *server.GitHubIntake
+	if *ghSecret != "" {
+		secret, err := loadSecret(*ghSecret)
+		if err != nil {
+			return fail(err)
+		}
+		intake = &server.GitHubIntake{WebhookSecret: secret, App: app}
+	} else if app != nil {
+		return fail(fmt.Errorf("--github-app-id needs --github-webhook-secret"))
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -120,7 +140,7 @@ func serveCmd(args []string) int {
 	}
 	defer st.Close()
 
-	srv := &server.Server{Store: st, DataDir: *dataDir, ProjectsDir: *projectsDir, Tokens: tokens, ReportsPerHour: *perHour, SigningKeyPEM: pubPEM}
+	srv := &server.Server{Store: st, DataDir: *dataDir, ProjectsDir: *projectsDir, Tokens: tokens, ReportsPerHour: *perHour, SigningKeyPEM: pubPEM, GitHub: intake}
 	hs := &http.Server{
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -165,6 +185,10 @@ func workerCmd(args []string) int {
 	lease := fs.Duration("lease", worker.DefaultLease, "job lease; renewed every lease/3 while a job runs")
 	poll := fs.Duration("poll", worker.DefaultPollInterval, "wait between checks when the queue is empty")
 	signKey := fs.String("sign-key", "", "sign every result with this key (see reprobot keygen)")
+	ghAppID := fs.String("github-app-id", "", "GitHub App client ID or app ID; posts verdicts on reports that came from GitHub")
+	ghAppKey := fs.String("github-app-key", "", "GitHub App private key (PEM file), with --github-app-id")
+	ghAPI := fs.String("github-api-url", github.DefaultBaseURL, "GitHub REST API base URL (for GitHub Enterprise Server)")
+	publicURL := fs.String("public-url", "", "base URL of serve, for result links in GitHub comments (for example https://reprobot.example.org)")
 	if code := parseFlags(fs, args, "db", "data", "projects"); code >= 0 {
 		return code
 	}
@@ -179,6 +203,13 @@ func workerCmd(args []string) int {
 	}
 	if err := checkDir(*projectsDir); err != nil {
 		return fail(err)
+	}
+	app, err := loadGitHubApp(*ghAppID, *ghAppKey, *ghAPI)
+	if err != nil {
+		return fail(err)
+	}
+	if *publicURL != "" && !strings.HasPrefix(*publicURL, "https://") && !strings.HasPrefix(*publicURL, "http://") {
+		return fail(fmt.Errorf("--public-url must start with https:// or http://"))
 	}
 	var key ed25519.PrivateKey
 	if *signKey != "" {
@@ -220,12 +251,54 @@ func workerCmd(args []string) int {
 		PollInterval: *poll,
 		SignKey:      key,
 	}
-	slog.Info("worker started", "concurrency", *concurrency, "lease", *lease)
-	if err := w.Serve(ctx); err != nil {
+	slog.Info("worker started", "concurrency", *concurrency, "lease", *lease, "github", app != nil)
+	var notified sync.WaitGroup
+	if app != nil {
+		n := &worker.Notifier{Store: st, GitHub: app, PublicURL: *publicURL}
+		notified.Go(func() { n.Serve(ctx) })
+	}
+	err = w.Serve(ctx)
+	notified.Wait()
+	if err != nil {
 		return fail(err)
 	}
 	slog.Info("worker stopped")
 	return 0
+}
+
+// loadGitHubApp returns nil when neither flag is set.
+func loadGitHubApp(id, keyPath, apiURL string) (*github.App, error) {
+	if id == "" && keyPath == "" {
+		return nil, nil
+	}
+	if id == "" || keyPath == "" {
+		return nil, fmt.Errorf("--github-app-id and --github-app-key go together")
+	}
+	b, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	key, err := github.ParseKey(b)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(apiURL, "https://") && !strings.HasPrefix(apiURL, "http://") {
+		return nil, fmt.Errorf("--github-api-url must start with https:// or http://")
+	}
+	return &github.App{ID: id, Key: key, BaseURL: apiURL}, nil
+}
+
+// loadSecret reads a secret file, without the trailing line break.
+func loadSecret(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	b = []byte(strings.TrimRight(string(b), "\r\n"))
+	if len(b) < 16 {
+		return nil, fmt.Errorf("%s: the webhook secret should be at least 16 characters", path)
+	}
+	return b, nil
 }
 
 func checkDir(dir string) error {

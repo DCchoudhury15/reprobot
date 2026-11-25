@@ -184,6 +184,106 @@ same host. Keep it readable only by the worker user, use one key per
 deployment, and switch to a new key if a worker host may have been reached
 (see Sandbox in DESIGN.md).
 
+## GitHub App
+
+reprobot can take private vulnerability reports straight from GitHub. A
+maintainer installs a GitHub App on the repository. When someone files a
+private vulnerability report there, GitHub sends a `repository_advisory`
+webhook with action `reported`; reprobot queues the report and posts the
+verdict back as a comment on the advisory. The reporter and the maintainers
+see it there.
+
+### Setting up the App
+
+The App is yours to register (Settings, Developer settings, GitHub Apps):
+
+- Permission: **Repository security advisories**, read and write (read to
+  get the webhook, write to comment).
+- Subscribe to the **Repository advisory** event.
+- Webhook URL: `https://<your serve address>/v1/github/webhook`, content
+  type `application/json`, with a random secret of at least 16 characters.
+- Make a private key and note the App's client ID (or app ID).
+
+Then:
+
+```sh
+reprobot serve ... \
+  --github-webhook-secret /etc/reprobot/github-webhook-secret \
+  --github-app-id Iv23li... --github-app-key /etc/reprobot/github-app.pem
+
+reprobot worker ... \
+  --github-app-id Iv23li... --github-app-key /etc/reprobot/github-app.pem \
+  --public-url https://reprobot.example.org
+```
+
+`--github-webhook-secret` turns on `POST /v1/github/webhook`. It needs no
+API token: every delivery must carry a valid `X-Hub-Signature-256`, or it
+gets `401`. The App key on `serve` is optional; with it, a report whose
+reprobot block cannot be used gets a comment saying why. The worker needs
+the key to post verdicts. `--public-url` adds a link to the result page.
+For GitHub Enterprise Server, set `--github-api-url` on both.
+
+The repository is matched to a project by the project's `repo` (for
+example `https://github.com/curl/curl.git`). A repository with no project,
+or with more than one, is ignored.
+
+### What the reporter writes
+
+Most reports will have no reprobot part, and reprobot then stays silent. To
+have a report checked, the reporter adds the repro.yaml and the files it
+lists to the report text, as fenced blocks:
+
+````markdown
+```reprobot
+version: 1
+project: tinyparse
+commit: 5e1f...
+profile: asan
+run:
+  cmd: ["bin/tinyparse", "poc/input.bin"]
+files:
+  - input.bin
+claim:
+  sanitizer: address
+  kind: heap-buffer-overflow
+  frame: parse_header
+```
+
+```reprobot-file input.bin
+yEFBQUFBQUFB...
+```
+````
+
+A `reprobot-file` block is base64 (`base64 -w0 input.bin`), or the text as
+is with `reprobot-file NAME text`. GitHub caps a report at 65535
+characters, so files must be small; that fits most crash inputs. The
+project in the repro.yaml must be the repository's project. File names
+follow the same rules as uploads.
+
+### What happens
+
+- The answer to GitHub is `202` with `status` `queued`, `ignored` (another
+  event or action, no project, no reprobot block) or `rejected` (a bad
+  block; the reason is also posted as a comment). A redelivery of the same
+  advisory is `200` with `status` `duplicate` and the first report: the
+  advisory id is the idempotency key.
+- The report has no owner, so only maintainer tokens read it in the API.
+  Its reporter is `github:<login of the sender>`.
+- When the job is done, the worker posts the verdict, the crash kind and
+  first project function, the fix check if any, and the link. Text from
+  the report or the program goes into code spans, so it cannot mention
+  people or add Markdown.
+- Comments wait in the database. A failed post (GitHub down, a bad key) is
+  tried again after 30s, 1m, 2m and so on (at most an hour), 8 times in
+  all; the last error is kept in `reports.github_comment_error`. A job that
+  failed for good gets no comment.
+
+Not built yet: the webhook does not set a `fix_commit`, and new comments
+on the advisory are not read (a reporter who fixes a block files a new
+report). The tests use a delivery written from GitHub's documented schema
+(`internal/github/testdata`); check it against a real delivery once the
+App is registered.
+
 ## Jobs
 
 A job is `queued`, `running`, `done` or `failed`.

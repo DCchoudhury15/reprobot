@@ -118,8 +118,8 @@ func TestMigrateConcurrentAndRepeated(t *testing.T) {
 	if err := stores[0].Migrate(ctx); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
-	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 6 {
-		t.Errorf("schema_migrations rows = %d, want 6", n)
+	if n := count(t, stores[0], "SELECT count(*) FROM schema_migrations"); n != 7 {
+		t.Errorf("schema_migrations rows = %d, want 7", n)
 	}
 }
 
