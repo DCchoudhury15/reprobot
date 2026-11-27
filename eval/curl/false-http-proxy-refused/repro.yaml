@@ -1,0 +1,23 @@
+version: 1
+project: curl
+# The CVE-2022-42915 commit, but an HTTP URL: the advisory lists dict,
+# gopher, ldap, rtmp and telnet, not HTTP, so there is no double free.
+commit: 9d0869d234b3be9d23a290df17f0893a22d56132
+profile: asan
+run:
+  cmd: ["bin/curl", "-x", "http://127.0.0.1:8080", "-p", "http://moo"]
+  timeout_seconds: 30
+  repeat: 3
+  servers:
+    - port: 8080
+      steps:
+        - read: headers
+        - send: connect_503.bin
+files:
+  - connect_503.bin
+claim:
+  sanitizer: address
+  kind: double-free
+  text: |
+    When an HTTP proxy refuses the CONNECT for an http URL, curl frees the
+    same memory twice.

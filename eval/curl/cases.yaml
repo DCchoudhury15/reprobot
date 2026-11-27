@@ -5,10 +5,13 @@
 # false: reports about bugs that do not exist.
 project: project.yaml
 real:
-  - dir: cve-2023-38545
-    id: CVE-2023-38545
-    fix: fb4415d8aee6c1045be932a34fe6107c2f5ed147
-    input: SOCKS5 protocol data derived from upstream test728 and the CVE advisory
+  - dir: cve-2022-42915
+    id: CVE-2022-42915
+    title: Double free when an HTTP proxy refuses the tunnel
+    fix: 55e1875729f9d9fc7315cec611bffbd2c817ad89
+    input: curl's regression test for the fix, tests/data/test445 (added in 038bfb8)
 false:
+  - dir: false-http-proxy-refused
+    about: the CVE-2022-42915 refused proxy with an http URL, which was never affected, claims the same double free
   - dir: false-short-hostname
-    about: the CVE-2023-38545 redirect with a 200 byte hostname, claims the same overflow
+    about: a SOCKS5 redirect to a 200 byte hostname, claims the CVE-2023-38545 heap overflow

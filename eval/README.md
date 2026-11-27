@@ -98,30 +98,40 @@ regression tests, so they are not used here.
 
 ## Limits
 
-- Two projects, seven bugs, all through one command line program each
-  (`xmllint` and `jq`).
+- Three projects, eight bugs, all through one command line program each
+  (`xmllint`, `jq` and `curl`).
 - The false reports are written by hand. They are not real reports received
   by a project.
 - Bugs that need a network peer use scripted loopback servers
-  (`run.servers`). The curl case below is the first one, and it does not
-  pass yet.
+  (`run.servers`). The curl case is the only one so far.
 
-## curl (not passing yet)
+## curl
 
-`curl/` checks CVE-2023-38545, the SOCKS5 hostname overflow, with a scripted
-SOCKS5 proxy on loopback. The build works on both commits, and a report about
-a 200 byte hostname correctly gives `NOT_REPRODUCED`. But the CVE report
-itself also gives `NOT_REPRODUCED` on the vulnerable commit, so `TestCurl`
-fails and there is no `RESULTS.md` for curl.
+Results: [curl/RESULTS.md](curl/RESULTS.md). One CVE, reproduced on the
+vulnerable commit and gone on the fix commit. Two false reports, none
+reproduced. The bug needs a network peer, so the report runs a scripted HTTP
+proxy on loopback (`run.servers`).
 
-The likely reason, from the curl advisory: the overflow needs a slow SOCKS5
-handshake and a hostname longer than curl's download buffer (about 100 KB in
-the curl tool unless `--limit-rate` makes it smaller). The current input
-sends a 260 byte hostname in one step. It comes from curl's own regression
-test for the fix (`tests/data/test728`), and that test only checks that the
-fixed curl refuses the hostname with error 97. On the vulnerable commit the
-same input makes curl go on without overflowing anything, so the test cannot
-give a sanitizer crash. A working curl case needs either an input built for
-the overflow conditions above or a different curl bug whose regression test
-crashes under ASan.
+- CVE-2022-42915: when an HTTP proxy refuses the `CONNECT` for a `dict`,
+  `gopher` or `telnet` URL, curl's error cleanup frees the same memory twice.
+  The command line and the proxy's 503 reply are curl's own regression test
+  for the fix, `tests/data/test445` (added in `038bfb8`, right after the fix
+  `55e1875`). The report claims the kind (double free) but no function, as
+  the public advisory names none.
 
+The false reports:
+
+- the same refused proxy with an `http` URL, which the advisory says was
+  never affected, claiming the same double free;
+- a SOCKS5 redirect to a 200 byte hostname, claiming the CVE-2023-38545 heap
+  overflow.
+
+### Why not CVE-2023-38545
+
+The first curl case was CVE-2023-38545, the SOCKS5 hostname overflow. It never
+reproduced, so it was replaced. The overflow needs a slow SOCKS5 handshake and
+a hostname longer than curl's download buffer (about 100 KB in the curl tool
+unless `--limit-rate` makes it smaller). curl's regression test for that fix
+(`tests/data/test728`) only checks that the fixed curl refuses a 256 byte
+hostname with error 97. On the vulnerable commit the same input makes curl go
+on without overflowing anything, so it cannot give a sanitizer crash.
