@@ -18,9 +18,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ErrNotImplemented marks a stub that another part of the work will fill in.
-var ErrNotImplemented = errors.New("not implemented")
-
 // ErrInvalid is wrapped by every error that comes from bad input: a field
 // that breaks a rule, an unknown field, a reporter file that is missing,
 // too big or outside the repro dir. Callers map it to INVALID_INPUT.
