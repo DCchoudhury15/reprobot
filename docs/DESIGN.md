@@ -212,7 +212,7 @@ hold no secrets: inputs go in, results come out.
 For a real bug, the same reproducer must give `REPRODUCED_AS_CLAIMED` on the
 vulnerable commit and `NOT_REPRODUCED` on the fix commit. If the fix is
 reverted, it must flip back. Every test fixture follows this rule, and so
-does the real CVE evaluation in `eval/` (libxml2, jq and curl).
+does the real CVE evaluation in `eval/` (libxml2, jq, curl and PCRE2).
 
 ## Fix check
 

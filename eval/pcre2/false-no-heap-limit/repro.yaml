@@ -1,0 +1,19 @@
+version: 1
+project: pcre2
+# The CVE-2026-86145 commit and pattern, but without the heap limit that
+# makes the workspace too small.
+commit: ec9c286d5c10cf1c388b58a442ccefded42254fd
+profile: asan
+run:
+  cmd: ["bin/pcre2test", "poc/input.txt"]
+  timeout_seconds: 30
+  repeat: 3
+files:
+  - input.txt
+claim:
+  sanitizer: address
+  kind: heap-buffer-overflow
+  frame: internal_dfa_match
+  text: |
+    DFA matching of a recursive pattern writes past the end of the
+    workspace in internal_dfa_match in pcre2_dfa_match.c.

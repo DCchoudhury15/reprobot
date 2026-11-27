@@ -1,0 +1,19 @@
+version: 1
+id: pcre2
+repo: https://github.com/PCRE2Project/pcre2.git
+image: gcc:15
+profiles:
+  asan:
+    build: >-
+      ./autogen.sh
+      && ./configure --disable-shared
+      CFLAGS="-fsanitize=address -g -O1 -fno-omit-frame-pointer"
+      LDFLAGS="-fsanitize=address"
+      && make -j2 pcre2test
+    outputs: [pcre2test]
+    env:
+      ASAN_OPTIONS: detect_leaks=0:symbolize=1
+limits:
+  cpus: 2
+  memory_mb: 2048
+  build_timeout_seconds: 900

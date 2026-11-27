@@ -117,7 +117,7 @@ and `file:line` references the report names, in the code at that commit.
 
 ## Tested on real CVEs
 
-Eight fixed CVEs in libxml2, jq and curl. Each report is run on the last
+Nine fixed CVEs in libxml2, jq, curl and PCRE2. Each report is run on the last
 vulnerable commit, then again on the fix commit. Only the commit changes.
 
 | Project | Bug | Crash | Vulnerable commit | Fix commit |
@@ -130,11 +130,12 @@ vulnerable commit, then again on the fix commit. Only the commit changes.
 | jq | CVE-2023-50246 | heap-buffer-overflow | 🔴 reproduced | 🟢 gone |
 | jq | CVE-2023-50268 | stack-buffer-overflow | 🔴 reproduced | 🟢 gone |
 | curl | CVE-2022-42915 | double-free | 🔴 reproduced | 🟢 gone |
+| PCRE2 | CVE-2026-86145 | heap-buffer-overflow | 🔴 reproduced | 🟢 gone |
 
-Seven fake reports, including a pasted sanitizer report that `xmllint` echoes
+Nine fake reports, including a pasted sanitizer report that `xmllint` echoes
 back on stderr, all give 🟢 `NOT_REPRODUCED`. A build takes about 30 seconds
 and a check on a cached build 1 to 2 seconds.
-Full results: [libxml2](eval/libxml2/RESULTS.md), [jq](eval/jq/RESULTS.md), [curl](eval/curl/RESULTS.md) · [how the eval works](eval/README.md)
+Full results: [libxml2](eval/libxml2/RESULTS.md), [jq](eval/jq/RESULTS.md), [curl](eval/curl/RESULTS.md), [PCRE2](eval/pcre2/RESULTS.md) · [how the eval works](eval/README.md)
 
 ## Quick start
 

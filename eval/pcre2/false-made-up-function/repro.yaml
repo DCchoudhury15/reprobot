@@ -1,0 +1,17 @@
+version: 1
+project: pcre2
+commit: ec9c286d5c10cf1c388b58a442ccefded42254fd
+profile: asan
+run:
+  cmd: ["bin/pcre2test", "poc/input.txt"]
+  timeout_seconds: 30
+  repeat: 3
+files:
+  - input.txt
+claim:
+  sanitizer: address
+  kind: heap-buffer-overflow
+  frame: dfa_workspace_grow
+  text: |
+    dfa_workspace_grow in pcre2_dfa_match.c overflows a heap buffer when a
+    lookahead is matched with the DFA matcher.

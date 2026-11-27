@@ -96,10 +96,34 @@ regression tests, so they are not used here.
   in the report text code are not reached. The command line in a report
   matters as much as the input file.
 
+## PCRE2
+
+Results: [pcre2/RESULTS.md](pcre2/RESULTS.md). One CVE, reproduced on the
+vulnerable commit and gone on the fix commit. Two false reports, none
+reproduced. The input is the regression test the PCRE2 maintainers added to
+`testdata/testinput6` in the fix commit, run with PCRE2's own test program
+`pcre2test`:
+
+- CVE-2026-86145 (GHSA-3r4p-g7gg-ppmf): DFA matching of a recursive pattern
+  under a 4 KiB heap limit writes past the end of the workspace. The
+  advisory names `pcre2_dfa_match()`; the write happens in
+  `internal_dfa_match`, the function it calls in the same file, so that is
+  the claimed frame.
+
+The false reports:
+
+- the same pattern without the heap limit, claiming the same overflow;
+- a claimed overflow in a function that does not exist, which the static
+  claim check also points out.
+
+Another PCRE2 bug was tried first and left out: the regression test for
+CVE-2025-58050 makes the vulnerable commit print a wrong result ("No match"),
+but it does not read out of bounds, so there is no sanitizer crash to check.
+
 ## Limits
 
-- Three projects, eight bugs, all through one command line program each
-  (`xmllint`, `jq` and `curl`).
+- Four projects, nine bugs, all through one command line program each
+  (`xmllint`, `jq`, `curl` and `pcre2test`).
 - The false reports are written by hand. They are not real reports received
   by a project.
 - Bugs that need a network peer use scripted loopback servers

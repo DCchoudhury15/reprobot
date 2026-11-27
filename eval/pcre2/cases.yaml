@@ -1,0 +1,19 @@
+# Evaluation cases for PCRE2. Each dir holds a repro.yaml and its files.
+#
+# real: the repro.yaml names the last vulnerable commit (the parent of the
+# fix). The same report is then run again on the fix commit and must not
+# crash there.
+# false: reports about bugs that do not exist, written for this evaluation.
+project: project.yaml
+real:
+  - dir: cve-2026-86145
+    id: CVE-2026-86145
+    title: Heap overflow in DFA matching under a heap limit
+    fix: c932e70451eafef922ebef364ac25042f0031135
+    input: the regression test added to testdata/testinput6 in the fix commit
+false:
+  - dir: false-no-heap-limit
+    about: the CVE-2026-86145 pattern without the heap limit, claims the same overflow
+  - dir: false-made-up-function
+    about: claims a heap overflow in a function that does not exist
+    finding: does not appear anywhere in the code
