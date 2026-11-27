@@ -229,7 +229,7 @@ signed with Ed25519, so other DSSE tools can check it too.
 
 Early. What works and what is next:
 
-- ✅ CLI, sandboxed builds and runs, ASan and UBSan
+- ✅ CLI, sandboxed builds and runs, ASan and UBSan, with gcc and clang
 - ✅ crash signatures, crash lines and duplicate grouping
 - ✅ static claim check and loopback test servers
 - ✅ service with tokens, per-token access and rate limits

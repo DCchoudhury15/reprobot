@@ -5,6 +5,7 @@ package runner
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -442,4 +443,74 @@ func TestE2EUBSan(t *testing.T) {
 	// The same crash claimed as another kind of bug is not "as claimed".
 	wrong := check(t, f.RepoDir, cache, f.Vuln, report("shift-out-of-bounds"))
 	wantState(t, wrong, result.ReproducedDifferent)
+}
+
+// clangImage builds the clang test image from testdata/images/clang (Debian
+// packages only; cached after the first build) and returns its tag.
+func clangImage(t *testing.T) string {
+	t.Helper()
+	const tag = "reprobot-test-clang"
+	dir := filepath.Join(testutil.FixtureDir(), "..", "..", "images", "clang")
+	out, err := exec.Command("docker", "build", "-q", "-t", tag, dir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker build %s: %v\n%s", dir, err, out)
+	}
+	return tag
+}
+
+// useClang switches the fixture project to the clang image and builds with
+// clang. clang links the sanitizer runtime into the program and needs
+// llvm-symbolizer for function names, so this is not the same path as gcc.
+func useClang(t *testing.T, project, image string) {
+	t.Helper()
+	edit(t, project, "image: gcc:15", "image: "+image)
+	edit(t, project, `build: make CFLAGS="-fsanitize=address`, `build: make CC=clang CFLAGS="-fsanitize=address`)
+	edit(t, project, `build: make CFLAGS="-fsanitize=undefined`, `build: make CC=clang CFLAGS="-fsanitize=undefined`)
+}
+
+// The same bugs built with clang instead of gcc: real clang ASan and UBSan
+// output is parsed, the crash is confirmed by the watcher through the
+// runtime linked into the program, and the fixes flip the verdict.
+func TestE2EClang(t *testing.T) {
+	image := clangImage(t)
+	f := testutil.NewTinyparseRepo(t)
+	cache := t.TempDir()
+	clang := func(project, _ string) { useClang(t, project, image) }
+
+	vuln := check(t, f.RepoDir, cache, f.Vuln, clang)
+	wantState(t, vuln, result.ReproducedAsClaimed)
+	if vuln.Crashed != 3 || vuln.Crash == nil || vuln.Crash.Kind != "heap-buffer-overflow" {
+		t.Fatalf("crashed %d of 3, crash %+v", vuln.Crashed, vuln.Crash)
+	}
+	if r := vuln.Runs[0].Report; !strings.Contains(r, "in parse_header") || !strings.Contains(r, "tinyparse.c:") {
+		t.Errorf("clang's report must be symbolized (llvm-symbolizer): %q", r)
+	}
+	if len(vuln.ClaimFindings) != 0 {
+		t.Errorf("the claim is accurate, got findings %q", vuln.ClaimFindings)
+	}
+	// The same bug built with gcc must get the same signature: runtime
+	// frames like clang's __asan_memcpy are not part of it.
+	byGCC := check(t, f.RepoDir, cache, f.Vuln, nil)
+	if byGCC.Crash == nil || byGCC.Crash.Signature != vuln.Crash.Signature {
+		t.Errorf("gcc and clang signatures differ:\ngcc   %+v\nclang %q", byGCC.Crash, vuln.Crash.SignatureText)
+	}
+	fix := check(t, f.RepoDir, cache, f.Fix, clang)
+	wantState(t, fix, result.NotReproduced)
+	revert := check(t, f.RepoDir, cache, f.Revert, clang)
+	wantState(t, revert, result.ReproducedAsClaimed)
+	if revert.Crash == nil || revert.Crash.Signature != vuln.Crash.Signature {
+		t.Errorf("revert signature %+v, want %q", revert.Crash, vuln.Crash.Signature)
+	}
+
+	u := testutil.NewTinyparseUBSanRepo(t)
+	ub := func(project, repro string) {
+		useClang(t, project, image)
+		ubsanReport(t, repro, "signed-integer-overflow")
+	}
+	uv := check(t, u.RepoDir, cache, u.Vuln, ub)
+	wantState(t, uv, result.ReproducedAsClaimed)
+	if uv.Crashed != 3 || !strings.Contains(uv.Runs[0].Report, "in table_bytes") {
+		t.Errorf("crashed %d of 3, report %q", uv.Crashed, uv.Runs[0].Report)
+	}
+	wantState(t, check(t, u.RepoDir, cache, u.Fix, ub), result.NotReproduced)
 }
