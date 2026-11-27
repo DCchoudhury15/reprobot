@@ -16,7 +16,7 @@ import (
 
 // siteProjects are the projects the site shows, in order. A project is
 // left out until its eval passes and writes site.json.
-var siteProjects = []string{"libxml2", "jq"}
+var siteProjects = []string{"libxml2", "jq", "curl", "pcre2"}
 
 type siteProject struct {
 	Project  string     `json:"project"`

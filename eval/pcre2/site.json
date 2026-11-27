@@ -1,0 +1,118 @@
+{
+ "project": "pcre2",
+ "recorded": "2026-11-27",
+ "real": [
+  {
+   "project": "pcre2",
+   "id": "CVE-2026-86145",
+   "dir": "cve-2026-86145",
+   "title": "Heap overflow in DFA matching under a heap limit",
+   "input": "the regression test added to testdata/testinput6 in the fix commit",
+   "cmd": "bin/pcre2test poc/input.txt",
+   "files": [
+    {
+     "name": "input.txt",
+     "bytes": 68
+    }
+   ],
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "internal_dfa_match"
+   },
+   "vuln": {
+    "commit": "ec9c286d5c10cf1c388b58a442ccefded42254fd",
+    "state": "REPRODUCED_AS_CLAIMED",
+    "reason": "crashed in 3 of 3 runs, as claimed",
+    "crashed": 3,
+    "runsMs": [
+     428,
+     355,
+     323
+    ],
+    "exit": [
+     107,
+     90,
+     120
+    ],
+    "kind": "heap-buffer-overflow",
+    "access": "WRITE",
+    "size": 4,
+    "frames": [
+     {
+      "fn": "internal_dfa_match",
+      "at": "pcre2_dfa_match.c:686"
+     },
+     {
+      "fn": "internal_dfa_match",
+      "at": "pcre2_dfa_match.c:2978"
+     },
+     {
+      "fn": "internal_dfa_match",
+      "at": "pcre2_dfa_match.c:2808"
+     }
+    ],
+    "signature": "05a5f6f7c62d7784",
+    "site": "924b75701d24f674",
+    "line": "ADD_NEW((int)(end_code - start_code + length), 0);"
+   },
+   "fix": {
+    "commit": "c932e70451eafef922ebef364ac25042f0031135",
+    "state": "NOT_REPRODUCED",
+    "reason": "no crash in 3 runs",
+    "crashed": 0,
+    "runsMs": [
+     315,
+     325,
+     300
+    ],
+    "exit": [
+     0,
+     0,
+     0
+    ]
+   }
+  }
+ ],
+ "fakes": [
+  {
+   "project": "pcre2",
+   "dir": "false-no-heap-limit",
+   "about": "the CVE-2026-86145 pattern without the heap limit, claims the same overflow",
+   "commit": "ec9c286d5c10cf1c388b58a442ccefded42254fd",
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "internal_dfa_match"
+   },
+   "state": "NOT_REPRODUCED",
+   "reason": "no crash in 3 runs",
+   "runsMs": [
+    329,
+    320,
+    301
+   ],
+   "findings": [],
+   "stderrHasReport": false
+  },
+  {
+   "project": "pcre2",
+   "dir": "false-made-up-function",
+   "about": "claims a heap overflow in a function that does not exist",
+   "commit": "ec9c286d5c10cf1c388b58a442ccefded42254fd",
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "dfa_workspace_grow"
+   },
+   "state": "NOT_REPRODUCED",
+   "reason": "no crash in 3 runs",
+   "runsMs": [
+    391,
+    299,
+    245
+   ],
+   "findings": [
+    "function \"dfa_workspace_grow\" does not appear anywhere in the code at ec9c286"
+   ],
+   "stderrHasReport": false
+  }
+ ]
+}

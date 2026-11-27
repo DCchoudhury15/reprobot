@@ -1,0 +1,114 @@
+{
+ "project": "curl",
+ "recorded": "2026-11-27",
+ "real": [
+  {
+   "project": "curl",
+   "id": "CVE-2022-42915",
+   "dir": "cve-2022-42915",
+   "title": "Double free when an HTTP proxy refuses the tunnel",
+   "input": "curl's regression test for the fix, tests/data/test445 (added in 038bfb8)",
+   "cmd": "bin/curl -x http://127.0.0.1:8080 -p dict://127.0.0.1 gopher://127.0.0.1 telnet://another",
+   "files": [
+    {
+     "name": "connect_503.bin",
+     "bytes": 156
+    }
+   ],
+   "claim": {
+    "kind": "double-free",
+    "frame": ""
+   },
+   "vuln": {
+    "commit": "9d0869d234b3be9d23a290df17f0893a22d56132",
+    "state": "REPRODUCED_AS_CLAIMED",
+    "reason": "crashed in 3 of 3 runs, as claimed",
+    "crashed": 3,
+    "runsMs": [
+     398,
+     408,
+     387
+    ],
+    "exit": [
+     66,
+     67,
+     85
+    ],
+    "kind": "double-free",
+    "frames": [
+     {
+      "fn": "Curl_free_request_state",
+      "at": "url.c:2278"
+     },
+     {
+      "fn": "Curl_close",
+      "at": "url.c:422"
+     },
+     {
+      "fn": "curl_easy_cleanup",
+      "at": "easy.c:799"
+     }
+    ],
+    "signature": "861da6a6bfae0086",
+    "site": "63813afbfef6ef26",
+    "line": "Curl_safefree(data-\u003ereq.p.http);"
+   },
+   "fix": {
+    "commit": "55e1875729f9d9fc7315cec611bffbd2c817ad89",
+    "state": "NOT_REPRODUCED",
+    "reason": "no crash in 3 runs",
+    "crashed": 0,
+    "runsMs": [
+     291,
+     317,
+     362
+    ],
+    "exit": [
+     56,
+     56,
+     56
+    ]
+   }
+  }
+ ],
+ "fakes": [
+  {
+   "project": "curl",
+   "dir": "false-http-proxy-refused",
+   "about": "the CVE-2022-42915 refused proxy with an http URL, which was never affected, claims the same double free",
+   "commit": "9d0869d234b3be9d23a290df17f0893a22d56132",
+   "claim": {
+    "kind": "double-free",
+    "frame": ""
+   },
+   "state": "NOT_REPRODUCED",
+   "reason": "no crash in 3 runs",
+   "runsMs": [
+    306,
+    288,
+    305
+   ],
+   "findings": [],
+   "stderrHasReport": false
+  },
+  {
+   "project": "curl",
+   "dir": "false-short-hostname",
+   "about": "a SOCKS5 redirect to a 200 byte hostname, claims the CVE-2023-38545 heap overflow",
+   "commit": "09e25b9d94f4106eac8ca3a43b221bdc66f405e4",
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "Curl_SOCKS5"
+   },
+   "state": "NOT_REPRODUCED",
+   "reason": "no crash in 3 runs",
+   "runsMs": [
+    367,
+    369,
+    382
+   ],
+   "findings": [],
+   "stderrHasReport": false
+  }
+ ]
+}

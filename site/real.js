@@ -2,7 +2,7 @@
    Docker) by REPROBOT_EVAL_SITE=1 go test -tags eval ./eval/.
    Do not edit by hand. */
 window.RB_REAL = {
- "recorded": "2026-11-21",
+ "recorded": "2026-11-27",
  "image": "gcc:15",
  "real": [
   {
@@ -507,6 +507,144 @@ window.RB_REAL = {
      0
     ]
    }
+  },
+  {
+   "project": "curl",
+   "id": "CVE-2022-42915",
+   "dir": "cve-2022-42915",
+   "title": "Double free when an HTTP proxy refuses the tunnel",
+   "input": "curl's regression test for the fix, tests/data/test445 (added in 038bfb8)",
+   "cmd": "bin/curl -x http://127.0.0.1:8080 -p dict://127.0.0.1 gopher://127.0.0.1 telnet://another",
+   "files": [
+    {
+     "name": "connect_503.bin",
+     "bytes": 156
+    }
+   ],
+   "claim": {
+    "kind": "double-free",
+    "frame": ""
+   },
+   "vuln": {
+    "commit": "9d0869d234b3be9d23a290df17f0893a22d56132",
+    "state": "REPRODUCED_AS_CLAIMED",
+    "reason": "crashed in 3 of 3 runs, as claimed",
+    "crashed": 3,
+    "runsMs": [
+     398,
+     408,
+     387
+    ],
+    "exit": [
+     66,
+     67,
+     85
+    ],
+    "kind": "double-free",
+    "frames": [
+     {
+      "fn": "Curl_free_request_state",
+      "at": "url.c:2278"
+     },
+     {
+      "fn": "Curl_close",
+      "at": "url.c:422"
+     },
+     {
+      "fn": "curl_easy_cleanup",
+      "at": "easy.c:799"
+     }
+    ],
+    "signature": "861da6a6bfae0086",
+    "site": "63813afbfef6ef26",
+    "line": "Curl_safefree(data-\u003ereq.p.http);"
+   },
+   "fix": {
+    "commit": "55e1875729f9d9fc7315cec611bffbd2c817ad89",
+    "state": "NOT_REPRODUCED",
+    "reason": "no crash in 3 runs",
+    "crashed": 0,
+    "runsMs": [
+     291,
+     317,
+     362
+    ],
+    "exit": [
+     56,
+     56,
+     56
+    ]
+   }
+  },
+  {
+   "project": "pcre2",
+   "id": "CVE-2026-86145",
+   "dir": "cve-2026-86145",
+   "title": "Heap overflow in DFA matching under a heap limit",
+   "input": "the regression test added to testdata/testinput6 in the fix commit",
+   "cmd": "bin/pcre2test poc/input.txt",
+   "files": [
+    {
+     "name": "input.txt",
+     "bytes": 68
+    }
+   ],
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "internal_dfa_match"
+   },
+   "vuln": {
+    "commit": "ec9c286d5c10cf1c388b58a442ccefded42254fd",
+    "state": "REPRODUCED_AS_CLAIMED",
+    "reason": "crashed in 3 of 3 runs, as claimed",
+    "crashed": 3,
+    "runsMs": [
+     428,
+     355,
+     323
+    ],
+    "exit": [
+     107,
+     90,
+     120
+    ],
+    "kind": "heap-buffer-overflow",
+    "access": "WRITE",
+    "size": 4,
+    "frames": [
+     {
+      "fn": "internal_dfa_match",
+      "at": "pcre2_dfa_match.c:686"
+     },
+     {
+      "fn": "internal_dfa_match",
+      "at": "pcre2_dfa_match.c:2978"
+     },
+     {
+      "fn": "internal_dfa_match",
+      "at": "pcre2_dfa_match.c:2808"
+     }
+    ],
+    "signature": "05a5f6f7c62d7784",
+    "site": "924b75701d24f674",
+    "line": "ADD_NEW((int)(end_code - start_code + length), 0);"
+   },
+   "fix": {
+    "commit": "c932e70451eafef922ebef364ac25042f0031135",
+    "state": "NOT_REPRODUCED",
+    "reason": "no crash in 3 runs",
+    "crashed": 0,
+    "runsMs": [
+     315,
+     325,
+     300
+    ],
+    "exit": [
+     0,
+     0,
+     0
+    ]
+   }
   }
  ],
  "fakes": [
@@ -606,6 +744,84 @@ window.RB_REAL = {
    ],
    "findings": [
     "function \"jvp_number_scientific_print\" does not appear anywhere in the code at c9a5156"
+   ],
+   "stderrHasReport": false
+  },
+  {
+   "project": "curl",
+   "dir": "false-http-proxy-refused",
+   "about": "the CVE-2022-42915 refused proxy with an http URL, which was never affected, claims the same double free",
+   "commit": "9d0869d234b3be9d23a290df17f0893a22d56132",
+   "claim": {
+    "kind": "double-free",
+    "frame": ""
+   },
+   "state": "NOT_REPRODUCED",
+   "reason": "no crash in 3 runs",
+   "runsMs": [
+    306,
+    288,
+    305
+   ],
+   "findings": [],
+   "stderrHasReport": false
+  },
+  {
+   "project": "curl",
+   "dir": "false-short-hostname",
+   "about": "a SOCKS5 redirect to a 200 byte hostname, claims the CVE-2023-38545 heap overflow",
+   "commit": "09e25b9d94f4106eac8ca3a43b221bdc66f405e4",
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "Curl_SOCKS5"
+   },
+   "state": "NOT_REPRODUCED",
+   "reason": "no crash in 3 runs",
+   "runsMs": [
+    367,
+    369,
+    382
+   ],
+   "findings": [],
+   "stderrHasReport": false
+  },
+  {
+   "project": "pcre2",
+   "dir": "false-no-heap-limit",
+   "about": "the CVE-2026-86145 pattern without the heap limit, claims the same overflow",
+   "commit": "ec9c286d5c10cf1c388b58a442ccefded42254fd",
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "internal_dfa_match"
+   },
+   "state": "NOT_REPRODUCED",
+   "reason": "no crash in 3 runs",
+   "runsMs": [
+    329,
+    320,
+    301
+   ],
+   "findings": [],
+   "stderrHasReport": false
+  },
+  {
+   "project": "pcre2",
+   "dir": "false-made-up-function",
+   "about": "claims a heap overflow in a function that does not exist",
+   "commit": "ec9c286d5c10cf1c388b58a442ccefded42254fd",
+   "claim": {
+    "kind": "heap-buffer-overflow",
+    "frame": "dfa_workspace_grow"
+   },
+   "state": "NOT_REPRODUCED",
+   "reason": "no crash in 3 runs",
+   "runsMs": [
+    391,
+    299,
+    245
+   ],
+   "findings": [
+    "function \"dfa_workspace_grow\" does not appear anywhere in the code at ec9c286"
    ],
    "stderrHasReport": false
   }
