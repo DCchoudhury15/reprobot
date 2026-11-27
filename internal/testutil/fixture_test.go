@@ -1,6 +1,9 @@
 package testutil
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestNewTinyparseRepo(t *testing.T) {
 	f := NewTinyparseRepo(t)
@@ -24,5 +27,16 @@ func TestNewTinyparseHistory(t *testing.T) {
 			t.Fatalf("bad or repeated commit %q", c)
 		}
 		seen[c] = true
+	}
+}
+
+func TestNewTinyparseUBSanRepo(t *testing.T) {
+	f := NewTinyparseUBSanRepo(t)
+	if f.Vuln == f.Fix || f.Fix == f.Revert || f.Vuln == f.Revert {
+		t.Fatalf("commits must differ: %+v", f)
+	}
+	b, err := os.ReadFile(UBSanInput())
+	if err != nil || len(b) != 3 || b[0] < 0x80 {
+		t.Fatalf("the input must be a count large enough to overflow: % x %v", b, err)
 	}
 }

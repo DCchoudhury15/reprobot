@@ -387,3 +387,59 @@ func TestE2EBisect(t *testing.T) {
 		t.Errorf("unknown good commit: %+v, %v", b, err)
 	}
 }
+
+// ubsanReport turns the fixture report into one for the table version's
+// integer overflow, which only UBSan finds. kind is the claimed kind.
+func ubsanReport(t *testing.T, repro, kind string) {
+	t.Helper()
+	b, err := os.ReadFile(testutil.UBSanInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(repro), "input.bin"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edit(t, repro, "profile: asan", "profile: ubsan")
+	edit(t, repro, "sanitizer: address", "sanitizer: undefined")
+	edit(t, repro, "kind: heap-buffer-overflow", "kind: "+kind)
+	edit(t, repro, "frame: parse_header", "frame: table_bytes")
+	edit(t, repro, "The memcpy in parse_header in tinyparse.c copies up to 255 bytes into a\n    16 byte heap buffer.",
+		"table_bytes in tinyparse.c multiplies the record count by 256 in an int,\n    which overflows for counts above 8388607.")
+}
+
+// A bug only UBSan finds goes through the whole path: the ubsan profile
+// builds it, the crash is read from the UBSan log, and the fix flips it.
+func TestE2EUBSan(t *testing.T) {
+	f := testutil.NewTinyparseUBSanRepo(t)
+	cache := t.TempDir()
+	report := func(kind string) func(string, string) {
+		return func(_, repro string) { ubsanReport(t, repro, kind) }
+	}
+
+	vuln := check(t, f.RepoDir, cache, f.Vuln, report("signed-integer-overflow"))
+	wantState(t, vuln, result.ReproducedAsClaimed)
+	if vuln.Crashed != 3 || vuln.Crash == nil || vuln.Crash.Sanitizer != "undefined" ||
+		vuln.Crash.Kind != "signed-integer-overflow" || vuln.Crash.Signature == "" {
+		t.Fatalf("crashed %d of 3, crash %+v", vuln.Crashed, vuln.Crash)
+	}
+	if len(vuln.ClaimFindings) != 0 {
+		t.Errorf("the claim is accurate, got findings %q", vuln.ClaimFindings)
+	}
+	if !strings.Contains(vuln.Runs[0].Report, "runtime error: signed integer overflow") ||
+		!strings.Contains(vuln.Runs[0].Report, "in table_bytes") {
+		t.Errorf("the run must keep the UBSan report with its stack: %q", vuln.Runs[0].Report)
+	}
+
+	fix := check(t, f.RepoDir, cache, f.Fix, report("signed-integer-overflow"))
+	wantState(t, fix, result.NotReproduced)
+
+	revert := check(t, f.RepoDir, cache, f.Revert, report("signed-integer-overflow"))
+	wantState(t, revert, result.ReproducedAsClaimed)
+	if revert.Crash == nil || revert.Crash.Signature != vuln.Crash.Signature {
+		t.Errorf("revert signature %+v, want %q", revert.Crash, vuln.Crash.Signature)
+	}
+
+	// The same crash claimed as another kind of bug is not "as claimed".
+	wrong := check(t, f.RepoDir, cache, f.Vuln, report("shift-out-of-bounds"))
+	wantState(t, wrong, result.ReproducedDifferent)
+}

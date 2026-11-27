@@ -36,10 +36,30 @@ func FixtureDir() string {
 // NewTinyparseRepo creates the fixture git repo in a temp dir.
 func NewTinyparseRepo(t testing.TB) Tinyparse {
 	t.Helper()
-	src := FixtureDir()
+	return newRepo(t, FixtureDir())
+}
+
+// NewTinyparseUBSanRepo creates a repo with the same three commits for a
+// bug that only UBSan finds: the table version of tinyparse multiplies a
+// record count by 256 in an int, which overflows for large counts. The
+// fix limits the count. Its input is UBSanInput.
+func NewTinyparseUBSanRepo(t testing.TB) Tinyparse {
+	t.Helper()
+	return newRepo(t, filepath.Join(FixtureDir(), "ubsan"))
+}
+
+// UBSanInput returns the input that overflows the table version.
+func UBSanInput() string {
+	return filepath.Join(FixtureDir(), "ubsan", "input.bin")
+}
+
+// newRepo builds Vuln, Fix and Revert from src/vuln and src/fixed, with the
+// fixture Makefile.
+func newRepo(t testing.TB, src string) Tinyparse {
+	t.Helper()
 	dir := t.TempDir()
 	git := gitRunner(t, dir)
-	copyFile(t, filepath.Join(src, "Makefile"), filepath.Join(dir, "Makefile"))
+	copyFile(t, filepath.Join(FixtureDir(), "Makefile"), filepath.Join(dir, "Makefile"))
 	copyFile(t, filepath.Join(src, "vuln", "tinyparse.c"), filepath.Join(dir, "tinyparse.c"))
 	git("init", "-q", "-b", "main")
 	git("add", "-A")
